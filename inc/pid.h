@@ -3,8 +3,10 @@
 
 #include <stdbool.h>
 #include "maths.h"
+#include <math.h>
 #include "filter.h"
 #include "smith_predictor.h"
+#include "utils.h"
 
 #define ANGLE_INDEX_COUNT 2
 #define FLIGHT_DYNAMICS_INDEX_COUNT 3
@@ -39,16 +41,16 @@ typedef union {
     struct {
        float x, y, z;
     };
-} fpVector3_tu;
+} fp_vector3_tu;
 
 typedef struct {
     float m[3][3];
-} fpMat3_ts;
+} fp_mat3_ts;
 
 typedef struct {
-    fpVector3_tu axis;
+    fp_vector3_tu axis;
     float angle;
-} fpAxisAngle_ts;
+} fp_axis_angle_ts;
 
 typedef enum {
     /* PID              MC      FW  */
@@ -64,7 +66,7 @@ typedef enum {
     PID_VEL_Z,      //   +       n/a
     PID_POS_HEADING,//   n/a     +
     PID_ITEM_COUNT
-} pidIndex_te;
+} pid_index_te;
 
 // TODO(agh): PIDFF
 typedef enum {
@@ -72,7 +74,7 @@ typedef enum {
     PID_TYPE_PID,   // Uses P, I and D terms
     PID_TYPE_PIFF,  // Uses P, I, D and FF
     PID_TYPE_AUTO,  // Autodetect
-} pidType_te;
+} pid_type_te;
 
 typedef struct {
     uint16_t P;
@@ -83,13 +85,13 @@ typedef struct {
 
 typedef struct {
     pid8_ts  pid[PID_ITEM_COUNT];
-} pidBank_ts;
+} pid_bank_ts;
 
 typedef enum {
     ITERM_RELAX_OFF = 0,
     ITERM_RELAX_RP,
     ITERM_RELAX_RPY
-} itermRelax_te;
+} iterm_relax_te;
 
 enum {
     SETTING_MC_P_ROLL_DEFAULT   = 40,
@@ -308,51 +310,98 @@ typedef struct {
     float error_gyro_if_limit;
 
     // Используется для УГЛОВОЙ фильтрации (PT1, нам здесь не нужна сверхрезкость)
-    fir_filter_ts angleFilterState;
+    fir_filter_ts angle_filter_state;
 
     // Rate filtering
-    rate_limit_filter_ts axisAccelFilter;
-    fir_filter_ts ptermLpfState;
-    filter_tu dtermLpfState;
-    filter_tu dtermLpf2State;
+    rate_limit_filter_ts axis_accel_filter;
+    fir_filter_ts pterm_lpf_state;
+    filter_tu dterm_lpf_state;
+    filter_tu dterm_lpf2_state;
 
-    float stickPosition;
+    float stick_position;
 
-    float previousRateTarget;
-    float previousRateGyro;
+    float previous_rate_target;
+    float previous_rate_gyro;
 
 #ifdef USE_D_BOOST
     firFilter_ts dBoostLpf;
     biquadFilter_t dBoostGyroLpf;
 #endif
-    uint16_t pidSumLimit;
-    filterApply4FnPtr ptermFilterApplyFn;
-    bool itermLimitActive;
-    bool itermFreezeActive;
+    uint16_t pid_sum_limit;
+    filter_apply_4_fn_ptr pterm_filter_apply_fn;
+    bool iterm_limit_active;
+    bool iterm_freeze_active;
 
-    biquadFilter_t rateTargetFilter;
+    biquad_filter_ts rate_target_filter;
 
-    smithPredictor_ts smithPredictor;
-} pidState_t;
+    smith_predictor_ts smith_predictor;
+} pid_state_ts;
 
-void rotationMatrixFromAngles(fpMat3_ts *rmat, const fp_angles_tu *angles);
-void rotationMatrixFromAxisAngle(fpMat3_ts *rmat, const fpAxisAngle_ts *a);
+typedef struct {
+    float kP;
+    float kI;
+    float kD;
+    float kT;   // Tracking gain (anti-windup)
+    float kFF;  // FeedForward Component
+} pid_controller_param_ts;
 
-static inline void set_vector_in_zero (fpVector3_tu *v)
+typedef enum {
+    PID_DTERM_FROM_ERROR            = 1 << 0,
+    PID_ZERO_INTEGRATOR             = 1 << 1,
+    PID_SHRINK_INTEGRATOR           = 1 << 2,
+    PID_LIMIT_INTEGRATOR            = 1 << 3,
+    PID_FREEZE_INTEGRATOR           = 1 << 4,
+} pid_controller_flags_te;
+
+typedef struct {
+    bool reset;
+    pid_controller_param_ts param;
+    pt1_filter_ts dterm_filter_state;     // last derivative for low-pass filter
+    float dterm_lpf_hz;                   // dTerm low pass filter cutoff frequency
+    float integrator;                   // integrator value
+    float last_input;                   // last input for derivative
+
+    float integral;                     // used integral value in output
+    float proportional;                 // used proportional value in output
+    float derivative;                   // used derivative value in output
+    float feed_forward;                  // used FeedForward value in output
+    float output_constrained;           // controller output constrained
+} pid_controller_ts;
+
+void pid_init (void);
+void pid_reset_TPA_filter (void);
+
+float nav_pid_apply2 (pid_controller_ts *pid, const float setpoint, const float measurement, const float dt, const float out_min, const float out_max, const pid_controller_flags_te pid_flags);
+float nav_pid_apply3 ( 
+    pid_controller_ts *pid,
+    const float setpoint,
+    const float measurement,
+    const float dt,
+    const float out_min,
+    const float out_max,
+    const pid_controller_flags_te pid_flags,
+    const float gainScaler,
+    const float dTermScaler
+);
+
+void rotation_matrix_from_angles        (fp_mat3_ts *rmat, const fp_angles_tu *angles);
+void rotation_matrix_from_axis_angle    (fp_mat3_ts *rmat, const fp_axis_angle_ts *a);
+
+static inline void set_vector_in_zero (fp_vector3_tu *v)
 {
     v->x = 0.0f;
     v->y = 0.0f;
     v->z = 0.0f;
 }
 
-static inline void rotation_matrix_rotate_vector (fpVector3_tu *result, const fpVector3_tu *a, const fpMat3_ts *rmat)
+static inline void rotation_matrix_rotate_vector (fp_vector3_tu *result, const fp_vector3_tu *a, const fp_mat3_ts *rmat)
 {
     result->x = rmat->m[0][0] * a->x + rmat->m[1][0] * a->y + rmat->m[2][0] * a->z;
     result->y = rmat->m[0][1] * a->x + rmat->m[1][1] * a->y + rmat->m[2][1] * a->z;
     result->z = rmat->m[0][2] * a->x + rmat->m[1][2] * a->y + rmat->m[2][2] * a->z;
 }
 
-static inline void vector_normalize (fpVector3_tu *result, const fpVector3_tu *v)
+static inline void vector_normalize (fp_vector3_tu *result, const fp_vector3_tu *v)
 {
     float length = fast_fsqrtf(sq(v->x) + sq(v->y) + sq(v->z));
     
@@ -367,21 +416,21 @@ static inline void vector_normalize (fpVector3_tu *result, const fpVector3_tu *v
     }
 }
 
-static inline void vector_cross_product (fpVector3_tu *result, const fpVector3_tu *a, const fpVector3_tu *b)
+static inline void vector_cross_product (fp_vector3_tu *result, const fp_vector3_tu *a, const fp_vector3_tu *b)
 {
     result->x = a->y * b->z - a->z * b->y;
     result->y = a->z * b->x - a->x * b->z;
     result->z = a->x * b->y - a->y * b->x;
 }
 
-static inline void vector_add (fpVector3_tu *result, const fpVector3_tu *a, const fpVector3_tu *b)
+static inline void vector_add (fp_vector3_tu *result, const fp_vector3_tu *a, const fp_vector3_tu *b)
 {
     result->x = a->x + b->x;
     result->y = a->y + b->y;
     result->z = a->z + b->z;
 }
 
-static inline void vector_scale (fpVector3_tu *result, const fpVector3_tu *a, const float b)
+static inline void vector_scale (fp_vector3_tu *result, const fp_vector3_tu *a, const float b)
 {
     result->x = a->x * b;
     result->y = a->y * b;

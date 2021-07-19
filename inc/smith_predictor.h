@@ -12,10 +12,10 @@ typedef struct {
     uint8_t idx;
     float data[MAX_SMITH_SAMPLES + 1];
     pt1_filter_ts smith_predictor_filter;
-    float smithPredictorStrength;
-} smithPredictor_ts;
+    float smith_predictor_strength;
+} smith_predictor_ts;
 
-float apply_smith_predictor (uint8_t axis, smithPredictor_ts *predictor, float sample);
-void smith_predictor_init   (smithPredictor_ts *predictor, float delay, float strength, uint16_t filter_lpf_hz, uint32_t looptime);
+float apply_smith_predictor (uint8_t axis, smith_predictor_ts *predictor, float sample);
+void smith_predictor_init   (smith_predictor_ts *predictor, float delay, float strength, uint16_t filter_lpf_hz, uint32_t looptime);
 
 #endif // _SMITH_PREDICTOR_H

@@ -15,6 +15,19 @@ typedef struct {
     float alpha;
 } pt1_filter_ts;
 
+typedef struct {
+    float state;
+    float state1;
+    float k;
+} pt2_filter_ts;
+
+typedef struct {
+    float state;
+    float state1;
+    float state2;
+    float k;
+} pt3_filter_ts;
+
 /* содержит данные, необходимые для обновления выборок через фильтр */
 typedef struct {
     float b0, b1, b2, a1, a2;
@@ -51,8 +64,8 @@ typedef struct {
     float jk; // производная от ускорения системы (например, рывок)
     float rk; // остаточная ошибка
     float dT, dT2, dT3;
-    float halfLife, boost;
-    pt1_filter_ts boostFilter;
+    float half_life, boost;
+    pt1_filter_ts boost_filter;
 } alpha_beta_gamma_filter_ts;
 
 typedef float (*filter_apply_fn_ptr)(void *filter, float input);
@@ -71,6 +84,22 @@ float   pt1_filter_apply3             (pt1_filter_ts *filter, float input, float
 float   pt1_filter_apply4             (pt1_filter_ts *filter, float input, float f_cut, float dt);
 void    pt1_filter_reset              (pt1_filter_ts *filter, float input);
 
+/*
+ * PT2 LowPassFilter
+ */
+float   pt2_filter_gain             (float f_cut, float dT);
+void    pt2_filter_init             (pt2_filter_ts *filter, float k);
+void    pt2_filter_update_cutoff    (pt2_filter_ts *filter, float k);
+float   pt2_filter_apply            (pt2_filter_ts *filter, float input);
+
+/*
+ * PT3 LowPassFilter
+ */
+float   pt3_filter_gain             (float f_cut, float dT);
+void    pt3_filter_init             (pt3_filter_ts *filter, float k);
+void    pt3_filter_update_cutoff    (pt3_filter_ts *filter, float k);
+float   pt3_filter_apply            (pt3_filter_ts *filter, float input);
+
 void    rate_limit_filter_init      (rate_limit_filter_ts *filter);
 float   rate_limit_filter_apply4    (rate_limit_filter_ts *filter, float input, float rate_limit, float dT);
 
@@ -81,7 +110,7 @@ float   biquad_filter_apply         (biquad_filter_ts *filter, float sample);
 float   biquad_filter_reset         (biquad_filter_ts *filter, float value);
 float   biquad_filter_apply_DF1     (biquad_filter_ts *filter, float input);
 float   filter_get_notch_Q          (float center_frequency_hz, float cutoff_frequency_hz);
-void    biquad_filter_update        (biquad_filter_ts *filter, float filter_freq, uint32_t refresh_rate, float Q, biquad_filter_ts filter_type);
+void    biquad_filter_update        (biquad_filter_ts *filter, float filter_freq, uint32_t refresh_rate, float Q, biquad_filter_type_te filter_type);
 
 void    alpha_beta_gamma_filter_init    (alpha_beta_gamma_filter_ts *filter, float alpha, float boost_gain, float half_life, float dT);
 float   alpha_beta_gamma_filter_apply   (alpha_beta_gamma_filter_ts *filter, float input);

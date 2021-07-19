@@ -7,6 +7,8 @@
 #include "maths.h"
 #include "utils.h"
 
+static void biquad_filter_setup_passthrough (biquad_filter_ts *filter);
+
 // NULL filter
 float null_filter_apply (void *filter, float input)
 {
@@ -53,7 +55,7 @@ float pt1_filter_get_last_output (pt1_filter_ts *filter) {
 
 void pt1_filter_update_cutoff (pt1_filter_ts *filter, float f_cut)
 {
-    filter->RC = pt1ComputeRC(f_cut);
+    filter->RC = pt1_Compute_RC(f_cut);
     filter->alpha = filter->dT / (filter->RC + filter->dT);
 }
 
@@ -74,7 +76,7 @@ float pt1_filter_apply4 (pt1_filter_ts *filter, float input, float f_cut, float 
 {
     // Pre calculate and store RC
     if (!filter->RC) {
-        filter->RC = pt1ComputeRC(f_cut);
+        filter->RC = pt1_Compute_RC(f_cut);
     }
 
     filter->dT = dT;    // cache latest dT for possible use in pt1FilterApply
@@ -92,7 +94,7 @@ void pt1_filter_reset (pt1_filter_ts *filter, float input)
 /*
  * PT2 LowPassFilter
  */
-float pt2FilterGain (float f_cut, float dT)
+float pt2_filter_gain (float f_cut, float dT)
 {
     const float order = 2.0f;
     const float orderCutoffCorrection = 1 / sqrtf(powf(2, 1.0f / order) - 1);
@@ -102,19 +104,19 @@ float pt2FilterGain (float f_cut, float dT)
     return dT / (RC + dT);
 }
 
-void pt2FilterInit(pt2Filter_t *filter, float k)
+void pt2_filter_init (pt2_filter_ts *filter, float k)
 {
     filter->state = 0.0f;
     filter->state1 = 0.0f;
     filter->k = k;
 }
 
-void pt2FilterUpdateCutoff(pt2Filter_t *filter, float k)
+void pt2_filter_update_cutoff (pt2_filter_ts *filter, float k)
 {
     filter->k = k;
 }
 
-float pt2FilterApply(pt2Filter_t *filter, float input)
+float pt2_filter_apply (pt2_filter_ts *filter, float input)
 {
     filter->state1 = filter->state1 + filter->k * (input - filter->state1);
     filter->state = filter->state + filter->k * (filter->state1 - filter->state);
@@ -124,7 +126,7 @@ float pt2FilterApply(pt2Filter_t *filter, float input)
 /*
  * PT3 LowPassFilter
  */
-float pt3FilterGain(float f_cut, float dT)
+float pt3_filter_gain (float f_cut, float dT)
 {
     const float order = 3.0f;
     const float orderCutoffCorrection = 1 / sqrtf(powf(2, 1.0f / order) - 1);
@@ -134,7 +136,7 @@ float pt3FilterGain(float f_cut, float dT)
     return dT / (RC + dT);
 }
 
-void pt3FilterInit(pt3Filter_t *filter, float k)
+void pt3_filter_init (pt3_filter_ts *filter, float k)
 {
     filter->state = 0.0f;
     filter->state1 = 0.0f;
@@ -142,12 +144,12 @@ void pt3FilterInit(pt3Filter_t *filter, float k)
     filter->k = k;
 }
 
-void pt3FilterUpdateCutoff(pt3Filter_t *filter, float k)
+void pt3_filter_update_cutoff (pt3_filter_ts *filter, float k)
 {
     filter->k = k;
 }
 
-float pt3FilterApply(pt3Filter_t *filter, float input)
+float pt3_filter_apply (pt3_filter_ts *filter, float input)
 {
     filter->state1 = filter->state1 + filter->k * (input - filter->state1);
     filter->state2 = filter->state2 + filter->k * (filter->state1 - filter->state2);
@@ -155,46 +157,45 @@ float pt3FilterApply(pt3Filter_t *filter, float input)
     return filter->state;
 }
 
-// rate_limit = maximum rate of change of the output value in units per second
-void rateLimitFilterInit(rateLimitFilter_t *filter)
+// rate_limit = максимальная скорость изменения выходного значения в единицах в секунду
+void rate_limit_filter_init (rate_limit_filter_ts *filter)
 {
     filter->state = 0;
 }
 
-float rateLimitFilterApply4(rateLimitFilter_t *filter, float input, float rate_limit, float dT)
+float rate_limit_filter_apply4 (rate_limit_filter_ts *filter, float input, float rate_limit, float dT)
 {
     if (rate_limit > 0) {
         const float rateLimitPerSample = rate_limit * dT;
         filter->state = constrainf(input, filter->state - rateLimitPerSample, filter->state + rateLimitPerSample);
-    }
-    else {
+    } else {
         filter->state = input;
     }
 
     return filter->state;
 }
 
-float filterGetNotchQ(float centerFrequencyHz, float cutoffFrequencyHz)
+float filter_get_notch_Q (float center_frequency_hz, float cutoff_frequency_hz)
 {
-    return centerFrequencyHz * cutoffFrequencyHz / (centerFrequencyHz * centerFrequencyHz - cutoffFrequencyHz * cutoffFrequencyHz);
+    return center_frequency_hz * cutoff_frequency_hz / (center_frequency_hz * center_frequency_hz - cutoff_frequency_hz * cutoff_frequency_hz);
 }
 
-void biquadFilterInitNotch(biquadFilter_t *filter, uint32_t samplingIntervalUs, uint16_t filterFreq, uint16_t cutoffHz)
+void biquad_filter_init_notch (biquad_filter_ts *filter, uint32_t sampling_interval_us, uint16_t filter_freq, uint16_t cutoff_hz)
 {
-    float Q = filterGetNotchQ(filterFreq, cutoffHz);
-    biquadFilterInit(filter, filterFreq, samplingIntervalUs, Q, FILTER_NOTCH);
+    float Q = filter_get_notch_Q(filter_freq, cutoff_hz);
+    biquad_filter_init(filter, filter_freq, sampling_interval_us, Q, FILTER_NOTCH);
 }
 
-// sets up a biquad Filter
-void biquadFilterInitLPF(biquadFilter_t *filter, uint16_t filterFreq, uint32_t samplingIntervalUs)
+// настраиваем биквадратный фильтр
+void biquad_filter_init_LPF (biquad_filter_ts *filter, uint16_t filter_freq, uint32_t sampling_interval_us)
 {
-    biquadFilterInit(filter, filterFreq, samplingIntervalUs, BIQUAD_Q, FILTER_LPF);
+    biquad_filter_init(filter, filter_freq, sampling_interval_us, BIQUAD_Q, FILTER_LPF);
 }
 
 
-static void biquadFilterSetupPassthrough(biquadFilter_t *filter)
+static void biquad_filter_setup_passthrough (biquad_filter_ts *filter)
 {
-    // By default set as passthrough
+    // По умолчанию установлено как сквозное
     filter->b0 = 1.0f;
     filter->b1 = 0.0f;
     filter->b2 = 0.0f;
@@ -202,85 +203,89 @@ static void biquadFilterSetupPassthrough(biquadFilter_t *filter)
     filter->a2 = 0.0f;
 }
 
-void biquadFilterInit(biquadFilter_t *filter, uint16_t filterFreq, uint32_t samplingIntervalUs, float Q, biquadFilterType_e filterType)
+void biquad_filter_init (biquad_filter_ts *filter, uint16_t filter_freq, uint32_t sampling_interval_us, float Q, biquad_filter_type_te filter_type)
 {
-    // Check for Nyquist frequency and if it's not possible to initialize filter as requested - set to no filtering at all
-    if (filterFreq < (1000000 / samplingIntervalUs / 2)) {
-        // setup variables
-        const float sampleRate = 1.0f / ((float)samplingIntervalUs * 0.000001f);
-        const float omega = 2.0f * M_PIf * ((float)filterFreq) / sampleRate;
+    // Проверяем частоту Найквиста, и если невозможно инициализировать фильтр по запросу - установить вообще без фильтрации
+    if (filter_freq < (1000000 / sampling_interval_us / 2)) {
+        const float sample_rate = 1.0f / ((float)sampling_interval_us * 0.000001f);
+        const float omega = 2.0f * M_PIf * ((float)filter_freq) / sample_rate;
         const float sn = get_sin_approx(omega);
         const float cs = get_cos_approx(omega);
         const float alpha = sn / (2 * Q);
 
         float b0, b1, b2;
-        switch (filterType) {
+
+        switch (filter_type) {
             case FILTER_LPF:
                 b0 = (1 - cs) / 2;
                 b1 = 1 - cs;
                 b2 = (1 - cs) / 2;
                 break;
+
             case FILTER_NOTCH:
                 b0 = 1;
                 b1 = -2 * cs;
                 b2 = 1;
                 break;
+
             default:
-                biquadFilterSetupPassthrough(filter);
+                biquad_filter_setup_passthrough(filter);
                 return;
         }
+
         const float a0 =  1 + alpha;
         const float a1 = -2 * cs;
         const float a2 =  1 - alpha;
 
-        // precompute the coefficients
+        // предварительно вычисляем коэффициенты
         filter->b0 = b0 / a0;
         filter->b1 = b1 / a0;
         filter->b2 = b2 / a0;
         filter->a1 = a1 / a0;
         filter->a2 = a2 / a0;
     } else {
-        biquadFilterSetupPassthrough(filter);
+        biquad_filter_setup_passthrough(filter);
     }
 
-    // zero initial samples
+    // обнуляем сэмплы
     filter->x1 = filter->x2 = 0;
     filter->y1 = filter->y2 = 0;
 }
 
-float biquadFilterApplyDF1(biquadFilter_t *filter, float input)
+float biquad_filter_apply_DF1 (biquad_filter_ts *filter, float input)
 {
-    /* compute result */
     const float result = filter->b0 * input + filter->b1 * filter->x1 + filter->b2 * filter->x2 - filter->a1 * filter->y1 - filter->a2 * filter->y2;
 
-    /* shift x1 to x2, input to x1 */
+    // сдвигаем x1 в x2, y1 в y2
     filter->x2 = filter->x1;
-    filter->x1 = input;
-
-    /* shift y1 to y2, result to y1 */
     filter->y2 = filter->y1;
+
+    filter->x1 = input;    
     filter->y1 = result;
 
     return result;
 }
 
-// Computes a biquad_t filter on a sample
-float biquadFilterApply(biquadFilter_t *filter, float input)
+// Вычисляет фильтр biquad_t по образцу
+float biquad_filter_apply (biquad_filter_ts *filter, float input)
 {
     const float result = filter->b0 * input + filter->x1;
+
     filter->x1 = filter->b1 * input - filter->a1 * result + filter->x2;
     filter->x2 = filter->b2 * input - filter->a2 * result;
+
     return result;
 }
 
-float biquadFilterReset(biquadFilter_t *filter, float value)
+float biquad_filter_reset (biquad_filter_ts *filter, float value)
 {
     filter->x1 = value - (value * filter->b0);
     filter->x2 = (filter->b2 - filter->a2) * value;
+
     return value;
 }
 
-void biquadFilterUpdate(biquadFilter_t *filter, float filterFreq, uint32_t refreshRate, float Q, biquadFilterType_e filterType)
+void biquad_filter_update (biquad_filter_ts *filter, float filter_freq, uint32_t refresh_rate, float Q, biquad_filter_type_te filter_type)
 {
     // backup state
     float x1 = filter->x1;
@@ -288,7 +293,7 @@ void biquadFilterUpdate(biquadFilter_t *filter, float filterFreq, uint32_t refre
     float y1 = filter->y1;
     float y2 = filter->y2;
 
-    biquadFilterInit(filter, filterFreq, refreshRate, Q, filterType);
+    biquad_filter_init(filter, filter_freq, refresh_rate, Q, filter_type);
 
     // restore state
     filter->x1 = x1;
@@ -297,12 +302,14 @@ void biquadFilterUpdate(biquadFilter_t *filter, float filterFreq, uint32_t refre
     filter->y2 = y2;
 }
 
-#ifdef USE_ALPHA_BETA_GAMMA_FILTER
-void alphaBetaGammaFilterInit(alphaBetaGammaFilter_t *filter, float alpha, float boostGain, float halfLife, float dT) {
+// #ifdef USE_ALPHA_BETA_GAMMA_FILTER
+void alpha_beta_gamma_filter_init(alpha_beta_gamma_filter_ts *filter, float alpha, float boost_gain, float half_life, float dT) 
+{
     // beta, gamma, and eta gains all derived from
     // http://yadda.icm.edu.pl/yadda/element/bwmeta1.element.baztech-922ff6cb-e991-417f-93f0-77448f1ef4ec/c/A_Study_Jeong_1_2017.pdf
 
-    const float xi = powf(-alpha + 1.0f, 0.25); // fourth rool of -a + 1
+    const float xi = powf(-alpha + 1.0f, 0.25); // корень четвертой степени из -a + 1
+
     filter->xk = 0.0f;
     filter->vk = 0.0f;
     filter->ak = 0.0f;
@@ -314,45 +321,46 @@ void alphaBetaGammaFilterInit(alphaBetaGammaFilter_t *filter, float alpha, float
 	filter->dT = dT;
 	filter->dT2 = dT * dT;
     filter->dT3 = dT * dT * dT;
-    pt1FilterInit(&filter->boostFilter, 100, dT);
+    pt1_filter_init(&filter->boost_filter, 100, dT);
 
-    const float boost = boostGain * 100;
+    const float boost = boost_gain * 100;
 
     filter->boost = (boost * boost / 10000) * 0.003;
-    filter->halfLife = halfLife != 0 ? powf(0.5f, dT / halfLife): 1.0f;
+    filter->half_life = half_life != 0 ? powf(0.5f, dT / half_life): 1.0f;
 }
 
-FAST_CODE float alphaBetaGammaFilterApply(alphaBetaGammaFilter_t *filter, float input) {
-    //xk - current system state (ie: position)
-	//vk - derivative of system state (ie: velocity)
-    //ak - derivative of system velociy (ie: acceleration)
-    //jk - derivative of system acceleration (ie: jerk)
-    float rk;   // residual error
+float alpha_beta_gamma_filter_apply (alpha_beta_gamma_filter_ts *filter, float input) 
+{
+    // xk - текущее состояние системы (т.е. положение)
+    // vk - производная состояния системы (т.е. скорость)
+    // ak - производная от скорости системы (то есть: ускорение)
+    // jk - производная от ускорения системы (т.е. рывок)
+    float rk;   // остаточная ошибка
 
-    // give the filter limited history
-    filter->xk *= filter->halfLife;
-    filter->vk *= filter->halfLife;
-    filter->ak *= filter->halfLife;
-    filter->jk *= filter->halfLife;
+    // даем фильтру ограниченную историю
+    filter->xk *= filter->half_life;
+    filter->vk *= filter->half_life;
+    filter->ak *= filter->half_life;
+    filter->jk *= filter->half_life;
 
-    // update our (estimated) state 'x' from the system (ie pos = pos + vel (last).dT)
+    // обновляем наше (оценочное) состояние 'x' из системы (т.е. pos = pos + vel (last) .dT)
     filter->xk += filter->dT * filter->vk + (1.0f / 2.0f) * filter->dT2 * filter->ak + (1.0f / 6.0f) * filter->dT3 * filter->jk;
     
-    // update (estimated) velocity (also estimated dterm from measurement)
+    // обновляем (оценочную) скорость (также оцениваемую dterm по результатам измерения)
     filter->vk += filter->dT * filter->ak + 0.5f * filter->dT2 * filter->jk;
     filter->ak += filter->dT * filter->jk;
     
-    // what is our residual error (measured - estimated)
+    // какова наша остаточная ошибка (измерено - оценено)
     rk = input - filter->xk;
 
-    // artificially boost the error to increase the response of the filter
-    rk += pt1FilterApply(&filter->boostFilter, fabsf(rk) * rk * filter->boost);
+    // искусственно увеличить ошибку, чтобы увеличить отклик фильтра
+    rk += pt1_filter_apply(&filter->boost_filter, fabsf(rk) * rk * filter->boost);
     if ((fabsf(rk * filter->a) > fabsf(input - filter->xk))) {
         rk = (input - filter->xk) / filter->a;
     }
-    filter->rk = rk; // for logging
+    filter->rk = rk; // для регистрации
 
-    // update our estimates given the residual error.
+    // обновляем наши оценки с учетом остаточной ошибки
     filter->xk += filter->a * rk;
     filter->vk += filter->b / filter->dT * rk;
     filter->ak += filter->g / (2.0f * filter->dT2) * rk;
@@ -360,5 +368,3 @@ FAST_CODE float alphaBetaGammaFilterApply(alphaBetaGammaFilter_t *filter, float 
 
 	return filter->xk;
 }
-
-#endif
