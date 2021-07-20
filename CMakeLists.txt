@@ -18,6 +18,9 @@ set(SOURCES src/main.c
             src/maths.c
             src/filter.c
             src/smith_predictor.c
+            src/control_rate_profile.c
+            src/rc_curves.c
+            src/mixer.c
             )
 
 add_executable(drone_firmware ${SOURCES})

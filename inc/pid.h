@@ -7,11 +7,14 @@
 #include "filter.h"
 #include "smith_predictor.h"
 #include "utils.h"
+#include "control_rate_profile.h"
+#include "scheduler.h"
 
 #define ANGLE_INDEX_COUNT 2
 #define FLIGHT_DYNAMICS_INDEX_COUNT 3
 #define XYZ_AXIS_COUNT 3
 #define PID_GYRO_RATE_BUF_LENGTH 5
+#define TASK_AUX_RATE_HZ   100 //In Hz
 
 typedef enum {
     X = 0,
