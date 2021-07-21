@@ -3,6 +3,10 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "runtime_config.h"
+#include "maths.h"
+#include "rx.h"
+#include "rc_controls.h"
 
 #define MAX_SUPPORTED_MOTORS 12
 
@@ -162,7 +166,6 @@ void process_continuous_servo_autotrim  (const float dT);
 void stop_motors                        (void);
 void stop_pwm_all_motors                (void);
 
-void load_primary_motor_mixer   (void);
 bool are_motors_running         (void);
 
 #endif // _MIXER_H

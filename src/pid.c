@@ -418,7 +418,7 @@ void pid_reset_TPA_filter (void)
 {
     if (used_pid_controller_type == PID_TYPE_PIFF && current_control_rate_profile.throttle.fixed_wing_tau_ms > 0) {
         pt1_filter_init_RC(&fixed_wing_tpa_filter, current_control_rate_profile.throttle.fixed_wing_tau_ms * 1e-3f, TASK_PERIOD_HZ(TASK_AUX_RATE_HZ) * 1e-6f);
-        pt1_filter_reset(&fixed_wing_tpa_filter, getThrottleIdleValue());
+//        pt1_filter_reset(&fixed_wing_tpa_filter, getThrottleIdleValue());
     }
 }
 

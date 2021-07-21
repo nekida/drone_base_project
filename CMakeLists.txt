@@ -21,6 +21,8 @@ set(SOURCES src/main.c
             src/control_rate_profile.c
             src/rc_curves.c
             src/mixer.c
+            src/runtime_config.c
+            src/rc_controls.c
             )
 
 add_executable(drone_firmware ${SOURCES})
