@@ -1,4 +1,5 @@
 #include "control_rate_profile.h"
+#include "rc_curves.h"
 
 control_rate_config_ts control_rate_profiles[MAX_CONTROL_RATE_PROFILE_COUNT];
 control_rate_config_ts current_control_rate_profile;
@@ -39,5 +40,5 @@ void set_control_rate_profile (uint8_t profile_index)
 
 void activate_control_rate_config (void)
 {
-    generate_throttle_curve(current_control_rate_profile);
+    generate_throttle_curve(&current_control_rate_profile);
 }

@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include "maths.h"
 #include "rx.h"
+#include "runtime_config.h"
 
 #define AIRMODE_THROTTLE_THRESHOLD 1300
 

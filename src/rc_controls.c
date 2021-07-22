@@ -139,44 +139,44 @@ void process_rc_stick_positions (throttle_status_te throttle_status)
     rc_sticks = st_tmp;
 
     // perform actions
-    bool arming_switch_is_active = IS_RC_MODE_ACTIVE(BOXARM);
-    emergencyArmingUpdate(armingSwitchIsActive);
+    bool dummy = true;
+    bool arming_switch_is_active = /*IS_RC_MODE_ACTIVE(BOXARM)*/ dummy; // получения флага арм
+    //emergencyArmingUpdate(arming_switch_is_active);                        // обновление очереди арминг с временными окнами, непонятно где используется
 
-    if (STATE(AIRPLANE) && feature(FEATURE_MOTOR_STOP) && armingConfig()->fixed_wing_auto_arm) {
+    if (STATE(AIRPLANE) && /* не в нашем таргете: feature(FEATURE_MOTOR_STOP) && */ arming_config.fixed_wing_auto_arm) {
         // Auto arm on throttle when using fixedwing and motorstop
-        if (throttleStatus != THROTTLE_LOW) {
-            tryArm();
+        if (throttle_status != THROTTLE_LOW) {
+            // tryArm(); //обновляем статус арминга: управляем диодом и выставляем флаги DISABLE_ARMING_FLAG(...);
             return;
         }
-    }
-    else {
-        if (armingSwitchIsActive) {
-            rcDisarmTimeMs = currentTimeMs;
-            tryArm();
+    } else {
+        if (arming_switch_is_active) {
+            rc_disarm_time_ms = current_time_ms;
+            //tryArm();
         } else {
-            // Disarming via ARM BOX
-            // Don't disarm via switch if failsafe is active or receiver doesn't receive data - we can't trust receiver
-            // and can't afford to risk disarming in the air
-            if (ARMING_FLAG(ARMED) && !IS_RC_MODE_ACTIVE(BOXFAILSAFE) && rxIsReceivingSignal() && !failsafeIsActive()) {
-                const timeMs_t disarmDelay = currentTimeMs - rcDisarmTimeMs;
-                if (disarmDelay > armingConfig()->switchDisarmDelayMs) {
-                    if (armingConfig()->disarm_kill_switch || (throttleStatus == THROTTLE_LOW)) {
-                        disarm(DISARM_SWITCH);
-                    }
-                }
-            }
-            else {
-                rcDisarmTimeMs = currentTimeMs;
-            }
+            // Снятие с охраны через ARM BOX
+            // Не снимать с охраны с помощью переключателя, если отказоустойчивый активен или получатель не получает данные - мы не можем доверять получателю
+            // и не могу позволить себе рискнуть обезвредить в воздухе
+            // if (ARMING_FLAG(ARMED) && !IS_RC_MODE_ACTIVE(BOXFAILSAFE) && rxIsReceivingSignal() && !failsafeIsActive()) {
+            //     const timeMs_t disarmDelay = currentTimeMs - rcDisarmTimeMs;
+            //     if (disarmDelay > armingConfig()->switchDisarmDelayMs) {
+            //         if (armingConfig()->disarm_kill_switch || (throttleStatus == THROTTLE_LOW)) {
+            //             disarm(DISARM_SWITCH);
+            //         }
+            //     }
+            // }
+            // else {
+            //     rcDisarmTimeMs = currentTimeMs;
+            // }
         }
 
         // KILLSWITCH disarms instantly
-        if (IS_RC_MODE_ACTIVE(BOXKILLSWITCH)) {
-            disarm(DISARM_KILLSWITCH);
-        }
+        // if (IS_RC_MODE_ACTIVE(BOXKILLSWITCH)) {
+        //     disarm(DISARM_KILLSWITCH);
+        // }
     }
 
-    if (rcDelayCommand != 20) {
+    if (rc_delay_command != 20) {
         return;
     }
 
@@ -188,100 +188,120 @@ void process_rc_stick_positions (throttle_status_te throttle_status)
     // actions during not armed
 
     // GYRO calibration
-    if (rcSticks == THR_LO + YAW_LO + PIT_LO + ROL_CE) {
-        gyroStartCalibration();
+    if (rc_sticks == THR_LO + YAW_LO + PIT_LO + ROL_CE) {
+        //gyroStartCalibration();
         return;
     }
 
 
-#if defined(NAV_NON_VOLATILE_WAYPOINT_STORAGE)
+// #if defined(NAV_NON_VOLATILE_WAYPOINT_STORAGE) - в common.h
     // Save waypoint list
-    if (rcSticks == THR_LO + YAW_CE + PIT_HI + ROL_LO) {
-        const bool success = saveNonVolatileWaypointList();
-        beeper(success ? BEEPER_ACTION_SUCCESS : BEEPER_ACTION_FAIL);
-    }
+    // В зависимости от позиции стиков:
+        // сохраняем неизменные путевые точки
+        // загружаем точки
+        // сбрасываем
+    switch (rc_sticks) {
+        case (THR_LO + YAW_CE + PIT_HI + ROL_LO):
+            // const bool success = saveNonVolatileWaypointList();
+            // beeper(success ? BEEPER_ACTION_SUCCESS : BEEPER_ACTION_FAIL);
+            break;
 
-    // Load waypoint list
-    if (rcSticks == THR_LO + YAW_CE + PIT_HI + ROL_HI) {
-        const bool success = loadNonVolatileWaypointList(false);
-        beeper(success ? BEEPER_ACTION_SUCCESS : BEEPER_ACTION_FAIL);
-    }
+        case (THR_LO + YAW_CE + PIT_HI + ROL_HI):
+            // const bool success = loadNonVolatileWaypointList(false);
+            // beeper(success ? BEEPER_ACTION_SUCCESS : BEEPER_ACTION_FAIL);
+            break;
 
-    if (rcSticks == THR_LO + YAW_CE + PIT_LO + ROL_HI) {
-        resetWaypointList();
-        beeper(BEEPER_ACTION_FAIL); // The above cannot fail, but traditionally, we play FAIL for not-loading
+        case (THR_LO + YAW_CE + PIT_LO + ROL_HI):
+            // resetWaypointList();
+            // beeper(BEEPER_ACTION_FAIL); // The above cannot fail, but traditionally, we play FAIL for not-loading
+            break;
+
     }
-#endif
+//#endif
 
     // Multiple configuration profiles
-    if (feature(FEATURE_TX_PROF_SEL)) {
+    bool FEATURE_TX_PROF_SEL = true; // заглушка
+    if (/*feature(FEATURE_TX_PROF_SEL)*/ FEATURE_TX_PROF_SEL ) { // FEATURE_TX_PROF_SEL в таргете. если есть фича выбора профилей   
 
-        uint8_t i = 0;
+        uint8_t num_profile = 0;
 
-        if (rcSticks == THR_LO + YAW_LO + PIT_CE + ROL_LO)          // ROLL left  -> Profile 1
-            i = 1;
-        else if (rcSticks == THR_LO + YAW_LO + PIT_HI + ROL_CE)     // PITCH up   -> Profile 2
-            i = 2;
-        else if (rcSticks == THR_LO + YAW_LO + PIT_CE + ROL_HI)     // ROLL right -> Profile 3
-            i = 3;
+        switch (rc_sticks) {
+            case (THR_LO + YAW_LO + PIT_CE + ROL_LO): num_profile = 1; break;   // ROLL left  -> Profile 1
+            case (THR_LO + YAW_LO + PIT_HI + ROL_CE): num_profile = 2; break;   // PITCH up   -> Profile 2
+            case (THR_LO + YAW_LO + PIT_CE + ROL_HI): num_profile = 3; break;   // ROLL right -> Profile 3
+        }
 
-        if (i) {
-            setConfigProfileAndWriteEEPROM(i - 1);
+       if (num_profile) {
+            // setConfigProfileAndWriteEEPROM(num_profile - 1);    // установка текущего профиля и запись на еепром
             return;
         }
 
-        i = 0;
+        // Несколько профилей конфигурации батареи
+        uint8_t num_battery_profile = 0;
 
-        // Multiple battery configuration profiles
-        if (rcSticks == THR_HI + YAW_LO + PIT_CE + ROL_LO)          // ROLL left  -> Profile 1
-            i = 1;
-        else if (rcSticks == THR_HI + YAW_LO + PIT_HI + ROL_CE)     // PITCH up   -> Profile 2
-            i = 2;
-        else if (rcSticks == THR_HI + YAW_LO + PIT_CE + ROL_HI)     // ROLL right -> Profile 3
-            i = 3;
+        switch (rc_sticks) {
+            case (THR_HI + YAW_LO + PIT_CE + ROL_LO): num_battery_profile = 1; break;   // ROLL left  -> Profile 1
+            case (THR_HI + YAW_LO + PIT_HI + ROL_CE): num_battery_profile = 2; break;   // PITCH up   -> Profile 2
+            case (THR_HI + YAW_LO + PIT_CE + ROL_HI): num_battery_profile = 3; break;   // ROLL right -> Profile 3
+        }
 
-        if (i) {
-            setConfigBatteryProfileAndWriteEEPROM(i - 1);
-            batteryDisableProfileAutoswitch();
-            activateBatteryProfile();
+        if (num_battery_profile) {
+            // setConfigBatteryProfileAndWriteEEPROM(num_battery_profile - 1); // установка текущего профиля батареи и запись на еепром
+            // batteryDisableProfileAutoswitch();                              // запретить автоперекючение профиля батареи
+            // activateBatteryProfile();                                       // 
             return;
         }
 
     }
 
     // Save config
-    if (rcSticks == THR_LO + YAW_LO + PIT_LO + ROL_HI) {
-        saveConfigAndNotify();
+    if (rc_sticks == THR_LO + YAW_LO + PIT_LO + ROL_HI) {
+        // saveConfigAndNotify(); // запись на еепром
     }
 
     // Calibrating Acc
-    if (rcSticks == THR_HI + YAW_LO + PIT_LO + ROL_CE) {
-        accStartCalibration();
+    if (rc_sticks == THR_HI + YAW_LO + PIT_LO + ROL_CE) {
+        // accStartCalibration(); // калибровка акселерометра
         return;
     }
 
     // Calibrating Mag
-    if (rcSticks == THR_HI + YAW_HI + PIT_LO + ROL_CE) {
-        ENABLE_STATE(CALIBRATE_MAG);
+    if (rc_sticks == THR_HI + YAW_HI + PIT_LO + ROL_CE) {
+        // ENABLE_STATE(CALIBRATE_MAG); // калибровка магнитометра
         return;
     }
 
     // Accelerometer Trim
-    if (rcSticks == THR_HI + YAW_CE + PIT_HI + ROL_CE) {
-        applyAndSaveBoardAlignmentDelta(0, -2);
-        rcDelayCommand = 10;
+    // выравнивание платы по роллу и питчу с последующей записью на еепром
+    if (rc_sticks == THR_HI + YAW_CE + PIT_HI + ROL_CE) {
+        // applyAndSaveBoardAlignmentDelta(0, -2);
+        rc_delay_command = 10;
         return;
-    } else if (rcSticks == THR_HI + YAW_CE + PIT_LO + ROL_CE) {
-        applyAndSaveBoardAlignmentDelta(0, 2);
-        rcDelayCommand = 10;
+    } else if (rc_sticks == THR_HI + YAW_CE + PIT_LO + ROL_CE) {
+        // applyAndSaveBoardAlignmentDelta(0, 2);
+        rc_delay_command = 10;
         return;
-    } else if (rcSticks == THR_HI + YAW_CE + PIT_CE + ROL_HI) {
-        applyAndSaveBoardAlignmentDelta(-2, 0);
-        rcDelayCommand = 10;
+    } else if (rc_sticks == THR_HI + YAW_CE + PIT_CE + ROL_HI) {
+        // applyAndSaveBoardAlignmentDelta(-2, 0);
+        rc_delay_command = 10;
         return;
-    } else if (rcSticks == THR_HI + YAW_CE + PIT_CE + ROL_LO) {
-        applyAndSaveBoardAlignmentDelta(2, 0);
-        rcDelayCommand = 10;
+    } else if (rc_sticks == THR_HI + YAW_CE + PIT_CE + ROL_LO) {
+        // applyAndSaveBoardAlignmentDelta(2, 0);
+        rc_delay_command = 10;
         return;
     }
+}
+
+/**
+  * @brief Получение значения отклонения стика, непревыщающее 500
+  * @param Индекс угла
+  * @retval Целое 32-битное знаковое
+  * @todo Переделать для нормальной работы
+  * @warning Использован как заглушка    
+  */
+int32_t get_rc_stick_deflection (int32_t axis) 
+{
+    int32_t dummy = 250;
+    //return MIN(ABS(rxGetChannelValue(axis) - PWM_RANGE_MIDDLE), 500);
+    return dummy;
 }

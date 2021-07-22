@@ -9,12 +9,26 @@
 #include "utils.h"
 #include "control_rate_profile.h"
 #include "scheduler.h"
+#include "mixer.h"
+#include "rc_controls.h"
 
 #define ANGLE_INDEX_COUNT 2
 #define FLIGHT_DYNAMICS_INDEX_COUNT 3
 #define XYZ_AXIS_COUNT 3
 #define PID_GYRO_RATE_BUF_LENGTH 5
 #define TASK_AUX_RATE_HZ   100 //In Hz
+#define HEADING_HOLD_ERROR_LPF_FREQ 2
+#define GYRO_SATURATION_LIMIT       1800        // 1800dps
+
+#define FP_PID_RATE_FF_MULTIPLIER   31.0f
+#define FP_PID_RATE_P_MULTIPLIER    31.0f
+#define FP_PID_RATE_I_MULTIPLIER    4.0f
+#define FP_PID_RATE_D_MULTIPLIER    1905.0f
+#define FP_PID_RATE_D_FF_MULTIPLIER   7270.0f
+#define FP_PID_LEVEL_P_MULTIPLIER   6.56f       // Level P gain units is [1/sec] and angle error is [deg] => [deg/s]
+#define FP_PID_YAWHOLD_P_MULTIPLIER 80.0f
+#define GRAVITY_CMSS    980.665f
+#define AXIS_ACCEL_MIN_LIMIT        50
 
 typedef enum {
     X = 0,
@@ -223,12 +237,9 @@ enum {
 typedef struct {
     uint8_t pid_controller_type;
 
-    pid8_ts  pid_bank_fw[PID_ITEM_COUNT];
-    pid8_ts  pid_bank_mc[PID_ITEM_COUNT];
-/*
-    pidBank_ts bank_fw;
-    pidBank_ts bank_mc;
-*/
+    pid_bank_ts bank_fw;
+    pid_bank_ts bank_mc;
+
     uint8_t dterm_lpf_type;                 // Dterm LPF type: PT1, BIQUAD
     uint16_t dterm_lpf_hz;                  
     
@@ -313,7 +324,7 @@ typedef struct {
     float error_gyro_if_limit;
 
     // Используется для УГЛОВОЙ фильтрации (PT1, нам здесь не нужна сверхрезкость)
-    fir_filter_ts angle_filter_state;
+    pt1_filter_ts angle_filter_state;
 
     // Rate filtering
     rate_limit_filter_ts axis_accel_filter;
@@ -439,5 +450,11 @@ static inline void vector_scale (fp_vector3_tu *result, const fp_vector3_tu *a, 
     result->y = a->y * b;
     result->z = a->z * b;
 }
+
+void    pid_init                    (void);
+void    pid_controller              (float dT);
+void    update_heading_hold_target  (int16_t heading);
+const   pid_bank_ts *get_pid_bank   (void);
+void    nav_pid_init                (pid_controller_ts *pid, float _kP, float _kI, float _kD, float _kFF, float _dterm_lpf_hz);
 
 #endif // _PID_H

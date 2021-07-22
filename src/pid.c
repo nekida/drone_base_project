@@ -10,6 +10,17 @@
 static void pid_apply_fixed_wing_rate_controller (pid_state_ts *pidState, flight_dynamics_index_te axis, float dT);
 static void pid_apply_multicopter_rate_controller (pid_state_ts *pid_state, flight_dynamics_index_te axis, float dT);
 static void null_rate_controller (pid_state_ts *pid_state, flight_dynamics_index_te axis, float dT);
+static float pid_rc_command_to_rate (int16_t stick, uint8_t rate);
+static float pid_heading_hold (float delta_t);
+static float get_calc_horizon_rate_magnitude (void);
+static void pid_level (pid_state_ts *pid_state, flight_dynamics_index_te axis, float horizon_rate_magnitude, float dT);
+static float pid_rc_command_to_angle (int16_t stick, int16_t max_inclination);
+static void pid_turn_assistant (pid_state_ts *pid_state_local, float bank_angle_target_local, float pitch_angle_target_local);
+static void pid_apply_fpv_camera_angle_mix (pid_state_ts *pid_state_local, uint8_t fpv_camera_angle);
+static void pid_apply_setpoint_rate_limiting (pid_state_ts *pid_state_local, flight_dynamics_index_te axis_local, float dT_local);
+static bool is_fixed_wing_iterm_limit_active (float stick_position);
+static void check_iterm_limiting_active (pid_state_ts *pid_state_local);
+static void chech_itrem_freezing_active (pid_state_ts *pid_state_local, flight_dynamics_index_te axis);
 
 // #ifdef USE_BLACKBOX
 int32_t axis_pid_p[FLIGHT_DYNAMICS_INDEX_COUNT];
@@ -53,103 +64,102 @@ static uint8_t used_pid_controller_type;
 typedef void (*pid_controller_fn_ptr)(pid_state_ts *pidState, flight_dynamics_index_te axis, float dT);
 static pid_controller_fn_ptr pid_controller_apply_fn;
 static filter_apply_fn_ptr dterm_lpf_filter_apply_fn;
-static filter_apply_fn_ptr dTerm_lpf2_filter_apply_fn;
-static bool levelingEnabled = false;
+static filter_apply_fn_ptr dterm_lpf2_filter_apply_fn;
+static bool leveling_enabled = false;
 
 static float fixed_wing_level_trim;
 static pid_controller_ts fixed_wing_level_trim_controller;
 
 pid_profile_ts pid_profile = {
-  .pid_bank_mc[PID_ROLL].P    = SETTING_MC_P_ROLL_DEFAULT,
-  .pid_bank_mc[PID_ROLL].I    = SETTING_MC_I_ROLL_DEFAULT,
-  .pid_bank_mc[PID_ROLL].D    = SETTING_MC_D_ROLL_DEFAULT,
-  .pid_bank_mc[PID_ROLL].FF   = SETTING_MC_CD_ROLL_DEFAULT,
+  .bank_mc.pid[PID_ROLL].P    = SETTING_MC_P_ROLL_DEFAULT,
+  .bank_mc.pid[PID_ROLL].I    = SETTING_MC_I_ROLL_DEFAULT,
+  .bank_mc.pid[PID_ROLL].D    = SETTING_MC_D_ROLL_DEFAULT,
+  .bank_mc.pid[PID_ROLL].FF   = SETTING_MC_CD_ROLL_DEFAULT,
 
-  .pid_bank_mc[PID_PITCH].P   = SETTING_MC_P_PITCH_DEFAULT,
-  .pid_bank_mc[PID_PITCH].I   = SETTING_MC_I_PITCH_DEFAULT,
-  .pid_bank_mc[PID_PITCH].D   = SETTING_MC_D_PITCH_DEFAULT,
-  .pid_bank_mc[PID_PITCH].FF  = SETTING_MC_CD_PITCH_DEFAULT,
+  .bank_mc.pid[PID_PITCH].P   = SETTING_MC_P_PITCH_DEFAULT,
+  .bank_mc.pid[PID_PITCH].I   = SETTING_MC_I_PITCH_DEFAULT,
+  .bank_mc.pid[PID_PITCH].D   = SETTING_MC_D_PITCH_DEFAULT,
+  .bank_mc.pid[PID_PITCH].FF  = SETTING_MC_CD_PITCH_DEFAULT,
 
-  .pid_bank_mc[PID_YAW].P     = SETTING_MC_P_YAW_DEFAULT, 
-  .pid_bank_mc[PID_YAW].I     = SETTING_MC_I_YAW_DEFAULT,
-  .pid_bank_mc[PID_YAW].D     = SETTING_MC_D_YAW_DEFAULT,
-  .pid_bank_mc[PID_YAW].FF    = SETTING_MC_CD_YAW_DEFAULT,
+  .bank_mc.pid[PID_YAW].P     = SETTING_MC_P_YAW_DEFAULT, 
+  .bank_mc.pid[PID_YAW].I     = SETTING_MC_I_YAW_DEFAULT,
+  .bank_mc.pid[PID_YAW].D     = SETTING_MC_D_YAW_DEFAULT,
+  .bank_mc.pid[PID_YAW].FF    = SETTING_MC_CD_YAW_DEFAULT,
 
-  .pid_bank_mc[PID_LEVEL].P   = SETTING_MC_P_LEVEL_DEFAULT,   // Self-level strength
-  .pid_bank_mc[PID_LEVEL].I   = SETTING_MC_I_LEVEL_DEFAULT,   // Self-leveing low-pass frequency (0 - disabled)
-  .pid_bank_mc[PID_LEVEL].D   = SETTING_MC_D_LEVEL_DEFAULT,   // 75% horizon strength
-  .pid_bank_mc[PID_LEVEL].FF  = SETTING_MC_FF_LEVEL_DEFAULT,
+  .bank_mc.pid[PID_LEVEL].P   = SETTING_MC_P_LEVEL_DEFAULT,   // Self-level strength
+  .bank_mc.pid[PID_LEVEL].I   = SETTING_MC_I_LEVEL_DEFAULT,   // Self-leveing low-pass frequency (0 - disabled)
+  .bank_mc.pid[PID_LEVEL].D   = SETTING_MC_D_LEVEL_DEFAULT,   // 75% horizon strength
+  .bank_mc.pid[PID_LEVEL].FF  = SETTING_MC_FF_LEVEL_DEFAULT,
 
-  .pid_bank_mc[PID_HEADING].P   = SETTING_NAV_MC_HEADING_P_DEFAULT, 
-  .pid_bank_mc[PID_HEADING].I   = SETTING_NAV_MC_HEADING_I_DEFAULT,
-  .pid_bank_mc[PID_HEADING].D   = SETTING_NAV_MC_HEADING_D_DEFAULT,
-  .pid_bank_mc[PID_HEADING].FF  = SETTING_NAV_MC_HEADING_FF_DEFAULT, 
+  .bank_mc.pid[PID_HEADING].P   = SETTING_NAV_MC_HEADING_P_DEFAULT, 
+  .bank_mc.pid[PID_HEADING].I   = SETTING_NAV_MC_HEADING_I_DEFAULT,
+  .bank_mc.pid[PID_HEADING].D   = SETTING_NAV_MC_HEADING_D_DEFAULT,
+  .bank_mc.pid[PID_HEADING].FF  = SETTING_NAV_MC_HEADING_FF_DEFAULT, 
 
-  .pid_bank_mc[PID_POS_XY].P  = SETTING_NAV_MC_POS_XY_P_DEFAULT,  // NAV_POS_XY_P * 100
-  .pid_bank_mc[PID_POS_XY].I  = SETTING_NAV_MC_POS_XY_I_DEFAULT,
-  .pid_bank_mc[PID_POS_XY].D  = SETTING_NAV_MC_POS_XY_D_DEFAULT,
-  .pid_bank_mc[PID_POS_XY].FF = SETTING_NAV_MC_POS_XY_FF_DEFAULT,
+  .bank_mc.pid[PID_POS_XY].P  = SETTING_NAV_MC_POS_XY_P_DEFAULT,  // NAV_POS_XY_P * 100
+  .bank_mc.pid[PID_POS_XY].I  = SETTING_NAV_MC_POS_XY_I_DEFAULT,
+  .bank_mc.pid[PID_POS_XY].D  = SETTING_NAV_MC_POS_XY_D_DEFAULT,
+  .bank_mc.pid[PID_POS_XY].FF = SETTING_NAV_MC_POS_XY_FF_DEFAULT,
 
-  .pid_bank_mc[PID_VEL_XY].P  = SETTING_NAV_MC_VEL_XY_P_DEFAULT,  // NAV_VEL_XY_P * 20
-  .pid_bank_mc[PID_VEL_XY].I  = SETTING_NAV_MC_VEL_XY_I_DEFAULT,  // NAV_VEL_XY_I * 100
-  .pid_bank_mc[PID_VEL_XY].D  = SETTING_NAV_MC_VEL_XY_D_DEFAULT,  // NAV_VEL_XY_D * 100
-  .pid_bank_mc[PID_VEL_XY].FF = SETTING_NAV_MC_VEL_XY_FF_DEFAULT, // NAV_VEL_XY_D * 100
+  .bank_mc.pid[PID_VEL_XY].P  = SETTING_NAV_MC_VEL_XY_P_DEFAULT,  // NAV_VEL_XY_P * 20
+  .bank_mc.pid[PID_VEL_XY].I  = SETTING_NAV_MC_VEL_XY_I_DEFAULT,  // NAV_VEL_XY_I * 100
+  .bank_mc.pid[PID_VEL_XY].D  = SETTING_NAV_MC_VEL_XY_D_DEFAULT,  // NAV_VEL_XY_D * 100
+  .bank_mc.pid[PID_VEL_XY].FF = SETTING_NAV_MC_VEL_XY_FF_DEFAULT, // NAV_VEL_XY_D * 100
 
-  .pid_bank_mc[PID_POS_Z].P   = SETTING_NAV_MC_POS_Z_P_DEFAULT,   // NAV_POS_Z_P * 100
-  .pid_bank_mc[PID_POS_Z].I   = SETTING_NAV_MC_POS_Z_I_DEFAULT,   // not used
-  .pid_bank_mc[PID_POS_Z].D   = SETTING_NAV_MC_POS_Z_D_DEFAULT,   // not used
-  .pid_bank_mc[PID_POS_Z].FF  = SETTING_NAV_MC_POS_Z_FF_DEFAULT,
+  .bank_mc.pid[PID_POS_Z].P   = SETTING_NAV_MC_POS_Z_P_DEFAULT,   // NAV_POS_Z_P * 100
+  .bank_mc.pid[PID_POS_Z].I   = SETTING_NAV_MC_POS_Z_I_DEFAULT,   // not used
+  .bank_mc.pid[PID_POS_Z].D   = SETTING_NAV_MC_POS_Z_D_DEFAULT,   // not used
+  .bank_mc.pid[PID_POS_Z].FF  = SETTING_NAV_MC_POS_Z_FF_DEFAULT,
 
-  .pid_bank_mc[PID_VEL_Z].P   = SETTING_NAV_MC_VEL_Z_P_DEFAULT,   // NAV_VEL_Z_P * 66.7
-  .pid_bank_mc[PID_VEL_Z].I   = SETTING_NAV_MC_VEL_Z_I_DEFAULT,   // NAV_VEL_Z_I * 20
-  .pid_bank_mc[PID_VEL_Z].D   = SETTING_NAV_MC_VEL_Z_D_DEFAULT,   // NAV_VEL_Z_D * 100
-  .pid_bank_mc[PID_VEL_Z].FF  = SETTING_NAV_MC_VEL_Z_FF_DEFAULT,
+  .bank_mc.pid[PID_VEL_Z].P   = SETTING_NAV_MC_VEL_Z_P_DEFAULT,   // NAV_VEL_Z_P * 66.7
+  .bank_mc.pid[PID_VEL_Z].I   = SETTING_NAV_MC_VEL_Z_I_DEFAULT,   // NAV_VEL_Z_I * 20
+  .bank_mc.pid[PID_VEL_Z].D   = SETTING_NAV_MC_VEL_Z_D_DEFAULT,   // NAV_VEL_Z_D * 100
+  .bank_mc.pid[PID_VEL_Z].FF  = SETTING_NAV_MC_VEL_Z_FF_DEFAULT,
 
-  .pid_bank_mc[PID_POS_HEADING].P   = SETTING_NAV_MC_POS_HEADING_P_DEFAULT,
-  .pid_bank_mc[PID_POS_HEADING].I   = SETTING_NAV_MC_POS_HEADING_I_DEFAULT,
-  .pid_bank_mc[PID_POS_HEADING].D   = SETTING_NAV_MC_POS_HEADING_D_DEFAULT,
-  .pid_bank_mc[PID_POS_HEADING].FF  = SETTING_NAV_MC_POS_HEADING_FF_DEFAULT,
+  .bank_mc.pid[PID_POS_HEADING].P   = SETTING_NAV_MC_POS_HEADING_P_DEFAULT,
+  .bank_mc.pid[PID_POS_HEADING].I   = SETTING_NAV_MC_POS_HEADING_I_DEFAULT,
+  .bank_mc.pid[PID_POS_HEADING].D   = SETTING_NAV_MC_POS_HEADING_D_DEFAULT,
+  .bank_mc.pid[PID_POS_HEADING].FF  = SETTING_NAV_MC_POS_HEADING_FF_DEFAULT,
 
+  .bank_fw.pid[PID_ROLL].P  = SETTING_FW_P_ROLL_DEFAULT,    // стабилизация P-составляющей фиксированного крыла для ROLL
+  .bank_fw.pid[PID_ROLL].I  = SETTING_FW_I_ROLL_DEFAULT,    // стабилизация I-составляющей фиксированного крыла для ROLL
+  .bank_fw.pid[PID_ROLL].D  = SETTING_FW_D_ROLL_DEFAULT,    // стабилизация D-составляющей фиксированного крыла для ROLL
+  .bank_fw.pid[PID_ROLL].FF = SETTING_FW_FF_ROLL_DEFAULT,   // стабилизация FF-составляющей фиксированного крыла для ROLL
 
-  .pid_bank_fw[PID_ROLL].P  = SETTING_FW_P_ROLL_DEFAULT,    // стабилизация P-составляющей фиксированного крыла для ROLL
-  .pid_bank_fw[PID_ROLL].I  = SETTING_FW_I_ROLL_DEFAULT,    // стабилизация I-составляющей фиксированного крыла для ROLL
-  .pid_bank_fw[PID_ROLL].D  = SETTING_FW_D_ROLL_DEFAULT,    // стабилизация D-составляющей фиксированного крыла для ROLL
-  .pid_bank_fw[PID_ROLL].FF = SETTING_FW_FF_ROLL_DEFAULT,   // стабилизация FF-составляющей фиксированного крыла для ROLL
+  .bank_fw.pid[PID_PITCH].P  = SETTING_FW_P_PITCH_DEFAULT,    // стабилизация P-составляющей фиксированного крыла для PITCH
+  .bank_fw.pid[PID_PITCH].I  = SETTING_FW_I_PITCH_DEFAULT,    // стабилизация I-составляющей фиксированного крыла для PITCH
+  .bank_fw.pid[PID_PITCH].D  = SETTING_FW_D_PITCH_DEFAULT,    // стабилизация D-составляющей фиксированного крыла для PITCH
+  .bank_fw.pid[PID_PITCH].FF = SETTING_FW_FF_PITCH_DEFAULT,   // стабилизация FF-составляющей фиксированного крыла для PITCH
 
-  .pid_bank_fw[PID_PITCH].P  = SETTING_FW_P_PITCH_DEFAULT,    // стабилизация P-составляющей фиксированного крыла для PITCH
-  .pid_bank_fw[PID_PITCH].I  = SETTING_FW_I_PITCH_DEFAULT,    // стабилизация I-составляющей фиксированного крыла для PITCH
-  .pid_bank_fw[PID_PITCH].D  = SETTING_FW_D_PITCH_DEFAULT,    // стабилизация D-составляющей фиксированного крыла для PITCH
-  .pid_bank_fw[PID_PITCH].FF = SETTING_FW_FF_PITCH_DEFAULT,   // стабилизация FF-составляющей фиксированного крыла для PITCH
+  .bank_fw.pid[PID_YAW].P  = SETTING_FW_P_YAW_DEFAULT,    // стабилизация P-составляющей фиксированного крыла для YAW
+  .bank_fw.pid[PID_YAW].I  = SETTING_FW_I_YAW_DEFAULT,    // стабилизация I-составляющей фиксированного крыла для YAW
+  .bank_fw.pid[PID_YAW].D  = SETTING_FW_D_YAW_DEFAULT,    // стабилизация D-составляющей фиксированного крыла для YAW
+  .bank_fw.pid[PID_YAW].FF = SETTING_FW_FF_YAW_DEFAULT,   // стабилизация FF-составляющей фиксированного крыла для YAW
 
-  .pid_bank_fw[PID_YAW].P  = SETTING_FW_P_YAW_DEFAULT,    // стабилизация P-составляющей фиксированного крыла для YAW
-  .pid_bank_fw[PID_YAW].I  = SETTING_FW_I_YAW_DEFAULT,    // стабилизация I-составляющей фиксированного крыла для YAW
-  .pid_bank_fw[PID_YAW].D  = SETTING_FW_D_YAW_DEFAULT,    // стабилизация D-составляющей фиксированного крыла для YAW
-  .pid_bank_fw[PID_YAW].FF = SETTING_FW_FF_YAW_DEFAULT,   // стабилизация FF-составляющей фиксированного крыла для YAW
+  .bank_fw.pid[PID_LEVEL].P   = SETTING_FW_P_LEVEL_DEFAULT, // стабилизация P-составляющей фиксированного крыла по ориентации, самоуравновешивающаяся сила,
+  .bank_fw.pid[PID_LEVEL].I   = SETTING_FW_I_LEVEL_DEFAULT, // Отсечка фильтра нижних частот для стабилизации ориентации неподвижного крыла, Самовыравнивающаяся частота низких частот (0 - отключено)
+  .bank_fw.pid[PID_LEVEL].D   = SETTING_FW_D_LEVEL_DEFAULT, // Стабилизация ориентации самолета Точка перехода HORIZON, 75% прочность горизонта
+  .bank_fw.pid[PID_LEVEL].FF  = SETTING_FW_FF_LEVEL_DEFAULT,
 
-  .pid_bank_fw[PID_LEVEL].P   = SETTING_FW_P_LEVEL_DEFAULT, // стабилизация P-составляющей фиксированного крыла по ориентации, самоуравновешивающаяся сила,
-  .pid_bank_fw[PID_LEVEL].I   = SETTING_FW_I_LEVEL_DEFAULT, // Отсечка фильтра нижних частот для стабилизации ориентации неподвижного крыла, Самовыравнивающаяся частота низких частот (0 - отключено)
-  .pid_bank_fw[PID_LEVEL].D   = SETTING_FW_D_LEVEL_DEFAULT, // Стабилизация ориентации самолета Точка перехода HORIZON, 75% прочность горизонта
-  .pid_bank_fw[PID_LEVEL].FF  = SETTING_FW_FF_LEVEL_DEFAULT,
+  .bank_fw.pid[PID_HEADING].P   = SETTING_NAV_FW_HEADING_P_DEFAULT,   // Усиление P контроллера удержания курса (фиксированное крыло)
+  .bank_fw.pid[PID_HEADING].I   = SETTING_NAV_FW_HEADING_I_DEFAULT,
+  .bank_fw.pid[PID_HEADING].D   = SETTING_NAV_FW_HEADING_D_DEFAULT,
+  .bank_fw.pid[PID_HEADING].FF  = SETTING_NAV_FW_HEADING_FF_DEFAULT,
 
-  .pid_bank_fw[PID_HEADING].P   = SETTING_NAV_FW_HEADING_P_DEFAULT,   // Усиление P контроллера удержания курса (фиксированное крыло)
-  .pid_bank_fw[PID_HEADING].I   = SETTING_NAV_FW_HEADING_I_DEFAULT,
-  .pid_bank_fw[PID_HEADING].D   = SETTING_NAV_FW_HEADING_D_DEFAULT,
-  .pid_bank_fw[PID_HEADING].FF  = SETTING_NAV_FW_HEADING_FF_DEFAULT,
+  .bank_fw.pid[PID_POS_Z].P   = SETTING_NAV_FW_POS_Z_P_DEFAULT,   // P усиление высоты ПИД-регулятором (фиксированное крыло), FW_POS_Z_P * 10
+  .bank_fw.pid[PID_POS_Z].I   = SETTING_NAV_FW_POS_Z_I_DEFAULT,   // I усиление высоты ПИД-регулятором (фиксированное крыло), FW_POS_Z_I * 10  
+  .bank_fw.pid[PID_POS_Z].D   = SETTING_NAV_FW_POS_Z_D_DEFAULT,   // D усиление высоты ПИД-регулятором (фиксированное крыло), FW_POS_Z_D * 10
+  .bank_fw.pid[PID_POS_Z].FF  = SETTING_NAV_FW_POS_Z_FF_DEFAULT,
 
-  .pid_bank_fw[PID_POS_Z].P   = SETTING_NAV_FW_POS_Z_P_DEFAULT,   // P усиление высоты ПИД-регулятором (фиксированное крыло), FW_POS_Z_P * 10
-  .pid_bank_fw[PID_POS_Z].I   = SETTING_NAV_FW_POS_Z_I_DEFAULT,   // I усиление высоты ПИД-регулятором (фиксированное крыло), FW_POS_Z_I * 10  
-  .pid_bank_fw[PID_POS_Z].D   = SETTING_NAV_FW_POS_Z_D_DEFAULT,   // D усиление высоты ПИД-регулятором (фиксированное крыло), FW_POS_Z_D * 10
-  .pid_bank_fw[PID_POS_Z].FF  = SETTING_NAV_FW_POS_Z_FF_DEFAULT,
+  .bank_fw.pid[PID_POS_XY].P  = SETTING_NAV_FW_POS_XY_P_DEFAULT,  // P-усиление ПИД-регулятора 2D траектории. Поиграйте с этим, чтобы получить прямую линию между путевыми точками или прямой возврат домой,  FW_POS_XY_P * 100
+  .bank_fw.pid[PID_POS_XY].I  = SETTING_NAV_FW_POS_XY_I_DEFAULT,  // I-усиление ПИД-регулятора 2D траектории. Слишком большое значение приведет к отклонению траектории. Лучше начинать настройку с нуля,     FW_POS_XY_I * 100
+  .bank_fw.pid[PID_POS_XY].D  = SETTING_NAV_FW_POS_XY_D_DEFAULT,  // D-усиление ПИД-регулятора 2D траектории. Слишком большое значение приведет к отклонению траектории. Лучше начинать настройку с нуля,     FW_POS_XY_D * 100
+  .bank_fw.pid[PID_POS_XY].FF = SETTING_NAV_FW_POS_XY_FF_DEFAULT,
 
-  .pid_bank_fw[PID_POS_XY].P  = SETTING_NAV_FW_POS_XY_P_DEFAULT,  // P-усиление ПИД-регулятора 2D траектории. Поиграйте с этим, чтобы получить прямую линию между путевыми точками или прямой возврат домой,  FW_POS_XY_P * 100
-  .pid_bank_fw[PID_POS_XY].I  = SETTING_NAV_FW_POS_XY_I_DEFAULT,  // I-усиление ПИД-регулятора 2D траектории. Слишком большое значение приведет к отклонению траектории. Лучше начинать настройку с нуля,     FW_POS_XY_I * 100
-  .pid_bank_fw[PID_POS_XY].D  = SETTING_NAV_FW_POS_XY_D_DEFAULT,  // D-усиление ПИД-регулятора 2D траектории. Слишком большое значение приведет к отклонению траектории. Лучше начинать настройку с нуля,     FW_POS_XY_D * 100
-  .pid_bank_fw[PID_POS_XY].FF = SETTING_NAV_FW_POS_XY_FF_DEFAULT,
-
-  .pid_bank_fw[PID_POS_HEADING].P   = SETTING_NAV_FW_POS_HDG_P_DEFAULT,   // P усиление ПИД-регулятора курса. (Фиксированное крыло, вездеходы, лодки)
-  .pid_bank_fw[PID_POS_HEADING].I   = SETTING_NAV_FW_POS_HDG_I_DEFAULT,   // I усиление ПИД-регулятора траектории движения. (Фиксированное крыло, вездеходы, лодки)
-  .pid_bank_fw[PID_POS_HEADING].D   = SETTING_NAV_FW_POS_HDG_D_DEFAULT,   // D усиление ПИД-регулятора траектории движения. (Фиксированное крыло, вездеходы, лодки)
-  .pid_bank_fw[PID_POS_HEADING].FF  = SETTING_NAV_FW_POS_HDG_FF_DEFAULT,
+  .bank_fw.pid[PID_POS_HEADING].P   = SETTING_NAV_FW_POS_HDG_P_DEFAULT,   // P усиление ПИД-регулятора курса. (Фиксированное крыло, вездеходы, лодки)
+  .bank_fw.pid[PID_POS_HEADING].I   = SETTING_NAV_FW_POS_HDG_I_DEFAULT,   // I усиление ПИД-регулятора траектории движения. (Фиксированное крыло, вездеходы, лодки)
+  .bank_fw.pid[PID_POS_HEADING].D   = SETTING_NAV_FW_POS_HDG_D_DEFAULT,   // D усиление ПИД-регулятора траектории движения. (Фиксированное крыло, вездеходы, лодки)
+  .bank_fw.pid[PID_POS_HEADING].FF  = SETTING_NAV_FW_POS_HDG_FF_DEFAULT,
 
   // Определяет тип D-терминального фильтра LPF ступени 1. Возможные значения: PT1, BIQUAD. «PT1» обеспечивает более быстрый отклик фильтра, в то время как «BIQUAD» лучшее затухание.
   .dterm_lpf_type = FILTER_BIQUAD,  
@@ -360,6 +370,24 @@ static HEADING_HOLD_STATE_te get_heading_hold_state (void)
 //     if (calculateCosTiltAngle() < headingHoldCosZLimit) {
 //         return HEADING_HOLD_DISABLED;
 //     }
+// #if defined(USE_NAV) - в common.h
+//     int nav_heading_state = navigationGetHeadingControlState();
+//     // NAV will prevent MAG_MODE from activating, but require heading control
+//     if (nav_heading_state != NAV_HEADING_CONTROL_NONE) {
+//         // Apply maghold only if heading control is in auto mode
+//         if (nav_heading_state == NAV_HEADING_CONTROL_AUTO) {
+//             return HEADING_HOLD_ENABLED;
+//         }
+//     } else
+// //#endif
+
+//     if (ABS(rc_command[YAW]) == 0 && FLIGHT_MODE(HEADING_MODE)) {
+//         return HEADING_HOLD_ENABLED;
+//     } else {
+//         return HEADING_HOLD_UPDATE_HEADING;
+//     }
+
+    return HEADING_HOLD_UPDATE_HEADING;
 }
 
 void pid_init (void)
@@ -391,15 +419,15 @@ void pid_init (void)
       pid_state[axis].pterm_filter_apply_fn = (filter_apply_4_fn_ptr)null_filter_apply4;
     }
 
-    // в зависимости от плафтормы (типа движков) меняется и тип ПИДа
+    // в зависимости от плафтормы меняется и тип ПИДа
     if (p_pid_profile->pid_controller_type == PID_TYPE_AUTO) {
-      // if (конфиг мотора) {
+      if (mixer_config.platform_type == PLATFORM_AIRPLANE || mixer_config.platform_type == PLATFORM_BOAT || mixer_config.platform_type == PLATFORM_ROVER) {
         used_pid_controller_type = PID_TYPE_PIFF;
         pid_controller_apply_fn = pid_apply_fixed_wing_rate_controller;
-      // } else {
+      } else {
         used_pid_controller_type = PID_TYPE_PID;
         pid_controller_apply_fn = pid_apply_multicopter_rate_controller;
-      // }
+      }
 
     } else {
       used_pid_controller_type = p_pid_profile->pid_controller_type;
@@ -407,18 +435,20 @@ void pid_init (void)
     }
 
     dterm_lpf_filter_apply_fn   = (p_pid_profile->dterm_lpf_hz)   ? (filter_apply_fn_ptr)pt1_filter_apply : (filter_apply_fn_ptr)biquad_filter_apply;
-    dTerm_lpf2_filter_apply_fn  = (p_pid_profile->dterm_lpf2_hz)  ? (filter_apply_fn_ptr)pt1_filter_apply : (filter_apply_fn_ptr)biquad_filter_apply;
+    dterm_lpf2_filter_apply_fn  = (p_pid_profile->dterm_lpf2_hz)  ? (filter_apply_fn_ptr)pt1_filter_apply : (filter_apply_fn_ptr)biquad_filter_apply;
 
     pid_reset_TPA_filter();
 
     fixed_wing_level_trim = p_pid_profile->fixed_wing_level_trim;
+
+    nav_pid_init(&fixed_wing_level_trim_controller, 0.0F, (float)p_pid_profile->fixed_wing_level_trim_gain / 100000.0F, 0.0F, 0.0F, 2.0F);
 }
 
 void pid_reset_TPA_filter (void)
 {
     if (used_pid_controller_type == PID_TYPE_PIFF && current_control_rate_profile.throttle.fixed_wing_tau_ms > 0) {
         pt1_filter_init_RC(&fixed_wing_tpa_filter, current_control_rate_profile.throttle.fixed_wing_tau_ms * 1e-3f, TASK_PERIOD_HZ(TASK_AUX_RATE_HZ) * 1e-6f);
-//        pt1_filter_reset(&fixed_wing_tpa_filter, getThrottleIdleValue());
+        pt1_filter_reset(&fixed_wing_tpa_filter, get_throttle_idle_value());
     }
 }
 
@@ -520,10 +550,270 @@ static void pid_apply_fixed_wing_rate_controller (pid_state_ts *pidState, flight
   */
 void pid_controller (float dT)
 {
-    if (!pid_filters_is_configured)
-        return;
+  if (!pid_filters_is_configured)
+      return;
 
+  bool can_use_fpv_camera_mix = true;
+  uint8_t heading_hold_state = get_heading_hold_state();  // получаем статус удержания курса
 
+  if (heading_hold_state == HEADING_HOLD_UPDATE_HEADING)
+    update_heading_hold_target(0); // обновляем значение по рысканию, 0 - заглушка
+
+  for (uint8_t axis = 0; axis < 3; axis++) {
+    // Шаг 1. Рассчитываем гироскопические коэффициенты.
+    pid_state[axis].gyro_rate = 0; // заглушка, значение с гироскопа по 3-м осям
+
+    // Шаг 2: чтение цели
+    float rate_target = (axis = FD_YAW && heading_hold_state == HEADING_HOLD_ENABLED) ? 
+                            pid_heading_hold(dT) : pid_rc_command_to_rate(rc_command[axis], current_control_rate_profile.stabilized.rates[axis]);
+
+    // Ограничиваем желаемую скорость тем, что гироскоп может надежно измерить
+    pid_state[axis].rate_target = constrainf(rate_target, -GYRO_SATURATION_LIMIT, +GYRO_SATURATION_LIMIT);
+
+// #ifdef USE_GYRO_KALMAN   // определен в common.h
+//         gyroKalmanUpdateSetpoint(axis, pidState[axis].rateTarget);
+// #endif
+
+//#ifdef USE_SMITH_PREDICTOR
+      //DEBUG_SET(DEBUG_SMITH_PREDICTOR, axis, pidState[axis].gyroRate);
+      pid_state[axis].gyro_rate = apply_smith_predictor(axis, &pid_state[axis].smith_predictor, pid_state[axis].gyro_rate);
+      //DEBUG_SET(DEBUG_SMITH_PREDICTOR, axis + 3, pidState[axis].gyroRate);
+//#endif
+  }
+
+  // Шаг 3: запустить управление для ANGLE_MODE, HORIZON_MODE и HEADING_LOCK
+  if (FLIGHT_MODE(ANGLE_MODE) || FLIGHT_MODE(HORIZON_MODE)) {
+    const float horizon_rate_magnitude = get_calc_horizon_rate_magnitude();
+    pid_level(&pid_state[FD_ROLL], FD_ROLL, horizon_rate_magnitude, dT);
+    pid_level(&pid_state[FD_PITCH], FD_PITCH, horizon_rate_magnitude, dT);
+    can_use_fpv_camera_mix = false;     // FPVANGLEMIX is incompatible with ANGLE/HORIZON
+    leveling_enabled = true;
+  } else {
+    leveling_enabled = false;
+  }
+
+  if ((FLIGHT_MODE(TURN_ASSISTANT) /*|| navigationRequiresTurnAssistance()*/) && (FLIGHT_MODE(ANGLE_MODE) || FLIGHT_MODE(HORIZON_MODE) /*|| navigationRequiresTurnAssistance()*/)) {
+    float bank_angle_target = DECIDEGREES_TO_RADIANS(pid_rc_command_to_angle(rc_command[FD_ROLL], p_pid_profile->max_angle_inclination[FD_ROLL]));
+    float pitch_angle_target = DECIDEGREES_TO_RADIANS(pid_rc_command_to_angle(rc_command[FD_PITCH], p_pid_profile->max_angle_inclination[FD_PITCH]));
+    pid_turn_assistant(pid_state, bank_angle_target, pitch_angle_target);
+    can_use_fpv_camera_mix = false;
+  }
+
+  if (can_use_fpv_camera_mix /*&& IS_RC_MODE_ACTIVE(BOXFPVANGLEMIX)*/ && current_control_rate_profile.misc.fpv_cam_angle_degrees)
+    pid_apply_fpv_camera_angle_mix(pid_state, current_control_rate_profile.misc.fpv_cam_angle_degrees);
+
+  // Предотвращаем сильное накопление Iterm при вводе стика
+  anti_windup_scaler = constrainf((1.0F - get_motor_mix_range()) / motor_iterm_windup_point, 0.0F, 1.0F);
+
+  for (uint8_t axis = 0; axis < 3; axis++) {
+    // Применить заданное значение скорости изменения пределов
+    pid_apply_setpoint_rate_limiting(&pid_state[axis], axis, dT);
+
+    // Шаг 4: Запуск управления с гироскопом
+    check_iterm_limiting_active(&pid_state[axis]);
+    chech_itrem_freezing_active(&pid_state[axis], axis);
+
+    pid_controller_apply_fn(&pid_state[axis], axis, dT);
+  }
+}
+
+static void chech_itrem_freezing_active (pid_state_ts *pid_state_local, flight_dynamics_index_te axis)
+{
+  if (used_pid_controller_type == PID_TYPE_PIFF && p_pid_profile->fixed_wing_yaw_iterm_bank_freeze != 0 && axis == FD_YAW) {
+    // Не позволять рысканью I-term увеличиваться, когда угол крена слишком велик
+    float bank_angle = /*DECIDEGREES_TO_DEGREES(attitude.values.roll)*/ 0.0;
+
+    if (fabs(bank_angle) > p_pid_profile->fixed_wing_yaw_iterm_bank_freeze && !(FLIGHT_MODE(AUTO_TUNE) || FLIGHT_MODE(TURN_ASSISTANT) /*|| navigationRequiresTurnAssistance()*/))
+      pid_state_local->iterm_freeze_active = true;
+    else
+      pid_state_local->iterm_freeze_active = false;
+  } else {
+    pid_state_local->iterm_freeze_active = false;
+  }
+}
+
+static void check_iterm_limiting_active (pid_state_ts *pid_state_local)
+{
+  bool should_activate = (used_pid_controller_type == PID_TYPE_PIFF) ? is_fixed_wing_iterm_limit_active(pid_state_local->stick_position) : mixer_is_output_saturated(); 
+
+  pid_state_local->iterm_limit_active = STATE(ANTI_WINDUP) || should_activate;
+}
+
+static bool is_fixed_wing_iterm_limit_active (float stick_position)
+{
+  /* * Iterm anti-windup должен быть активен только тогда, когда пилот управляет вращением * скорости напрямую, а не когда используются УГОЛ или ГОРИЗОНТ */
+  if (leveling_enabled)
+    return false;
+
+  return fabs(stick_position) > p_pid_profile->fixed_wing_iterm_limit_on_stick_position;
+}
+
+/* Примените ограничение углового ускорения к заданной скорости, чтобы ограничить экстремальные нажатия ручки для соблюдения физических возможностей машины */
+static void pid_apply_setpoint_rate_limiting (pid_state_ts *pid_state_local, flight_dynamics_index_te axis_local, float dT_local)
+{
+  const uint32_t axis_accel_limit = (axis_local == FD_YAW) ? p_pid_profile->axis_acceleration_limit_yaw : p_pid_profile->axis_acceleration_limit_roll_pitch;
+
+  if (axis_accel_limit > AXIS_ACCEL_MIN_LIMIT)
+    pid_state_local->rate_target = rate_limit_filter_apply4(&pid_state_local->axis_accel_filter, pid_state_local->rate_target, (float)axis_accel_limit, dT_local);
+}
+
+static void pid_apply_fpv_camera_angle_mix (pid_state_ts *pid_state_local, uint8_t fpv_camera_angle)
+{
+  static uint8_t last_fpv_cam_angle_degrees = 0;
+  static float cos_camera_angle = 1.0;
+  static float sin_camera_angle = 0.0;
+
+  if (last_fpv_cam_angle_degrees != fpv_camera_angle) {
+    last_fpv_cam_angle_degrees = fpv_camera_angle;
+    cos_camera_angle = get_cos_approx(DEGREES_TO_RADIANS(fpv_camera_angle));
+    sin_camera_angle = get_sin_approx(DEGREES_TO_RADIANS(fpv_camera_angle));
+  }
+
+  // Повернуть команду поворота / рыскания из системы координат кадра камеры в систему координат кадра тела
+  const float roll_rate = pid_state_local[ROLL].rate_target;
+  const float yaw_rate = pid_state_local[YAW].rate_target;
+
+  pid_state_local[ROLL].rate_target = constrainf(roll_rate * cos_camera_angle - yaw_rate * sin_camera_angle, -GYRO_SATURATION_LIMIT, GYRO_SATURATION_LIMIT);
+  pid_state_local[YAW].rate_target = constrainf(yaw_rate * cos_camera_angle + roll_rate * sin_camera_angle, -GYRO_SATURATION_LIMIT, GYRO_SATURATION_LIMIT);
+}
+
+/*
+* Режим TURN ASSISTANT - это вспомогательный режим для выполнения поворота по рысканью на плоскости земли, что позволяет поворачивать одним джойстиком больше RATE
+* и сохраняя положение ROLL и PITCH на повороте.
+*/
+static void pid_turn_assistant (pid_state_ts *pid_state_local, float bank_angle_target_local, float pitch_angle_target_local)
+{
+  fp_vector3_tu target_rates = {
+    .x = 0.0F,
+    .y = 0.0F
+  };
+
+  if (STATE(AIRPLANE)) {
+    if (true) {// calculateCosTiltAngle() >= 0.173648f если косинус наклона больше или равен
+    // Идеальный поворот с наклоном следуйте уравнениям:
+             // forward_vel ^ 2 / radius = Gravity * tan (roll_angle)
+             // yaw_rate = forward_vel / radius
+             // Если мы решим угол крена, мы получим:
+             // tan (roll_angle) = forward_vel * yaw_rate / Gravity
+             // Если мы решим скорость рыскания, мы получим:
+             // yaw_rate = tan (roll_angle) * Gravity / forward_vel
+//#if defined(USE_PITOT) - определен в common.h
+          float airspeed_for_coordinated_turn = sensors(1 /* - заглушка для SENSOR_PITOT*/) ? 0 /* - заглушка для этого: pitot.airSpeed*/ : p_pid_profile->fixed_wing_reference_airspeed;
+//#endif
+    // Ограничивайтесь разумными пределами - 10 км / ч - 216 км / ч
+      airspeed_for_coordinated_turn = constrainf(airspeed_for_coordinated_turn, 300, 6000);
+
+      // Расчет скорости поворота в кадре Земли в соответствии со Справочником пилотов по аэронавигационным знаниям FAA
+      bank_angle_target_local = constrainf (bank_angle_target_local, -DEGREES_TO_RADIANS(60), DEGREES_TO_RADIANS(60));
+      float turn_rate_pitch_adjustment_factor = get_cos_approx(fabs(pitch_angle_target_local));
+      float coordinated_turn_rate_earth_frame = GRAVITY_CMSS * tan_approx(-bank_angle_target_local) / airspeed_for_coordinated_turn * turn_rate_pitch_adjustment_factor;
+
+      target_rates.z = RADIANS_TO_DEGREES(coordinated_turn_rate_earth_frame);
+    } else {
+      // Не разрешать скоординированный расчет разворота, если самолет находится на крутом крене или крутом подъеме / пикировании
+      return;
+    }
+  } else {
+    target_rates.z = pid_state_local[YAW].rate_target;
+  }
+
+  // Преобразуем рассчитанные смещения скорости в корпус и применяем
+  // imuTransformVectorEarthToBody(&targetRates);
+
+  // Добавляем крен и тангаж
+  pid_state_local[ROLL].rate_target = constrainf(pid_state_local[ROLL].rate_target + target_rates.x, -current_control_rate_profile.stabilized.rates[ROLL] * 10.0F, current_control_rate_profile.stabilized.rates[ROLL] * 10.0F);
+  pid_state_local[PITCH].rate_target = constrainf(pid_state_local[PITCH].rate_target + target_rates.y * p_pid_profile->fixed_wing_coordinated_pitch_gain, -current_control_rate_profile.stabilized.rates[PITCH] * 10.0F, current_control_rate_profile.stabilized.rates[PITCH] * 10.0F);
+
+  // Заменить рыскание на квадриках - добавить на самолетах
+  pid_state_local[YAW].rate_target = (STATE(AIRPLANE)) ? 
+      constrainf(pid_state_local[YAW].rate_target + target_rates.z * p_pid_profile->fixed_wing_coordinated_yaw_gain, -current_control_rate_profile.stabilized.rates[YAW] * 10.0F, current_control_rate_profile.stabilized.rates[YAW] * 10.0F) :
+      constrainf(target_rates.z, -current_control_rate_profile.stabilized.rates[YAW] * 10.0F, current_control_rate_profile.stabilized.rates[YAW] * 10.0F);
+}
+
+static void pid_level (pid_state_ts *pid_state, flight_dynamics_index_te axis, float horizon_rate_magnitude, float dT)
+{
+  // Это ROLL / PITCH, запускаем контроллеры ANGLE / HORIZON
+  float angle_target = pid_rc_command_to_angle(rc_command[axis], p_pid_profile->max_angle_inclination[axis]);
+
+  // Автоматически понижать тангаж, если дроссельная заслонка управляется вручную, и уменьшенная сильфонная дроссельная заслонка
+  if ( (axis == FD_PITCH) && STATE(AIRPLANE) && FLIGHT_MODE(ANGLE_MODE) /*&& !navigationIsControllingThrottle() - состояние моторов*/)
+    angle_target += 0; /*scaleRange(MAX(0, currentBatteryProfile->nav.fw.cruise_throttle - rcCommand[THROTTLE]), 0, currentBatteryProfile->nav.fw.cruise_throttle - PWM_RANGE_MIN, 0, currentBatteryProfile->fwMinThrottleDownPitchAngle);*/
+
+  // Подстройка PITCH, применяемая в режиме полета AutoLevel и ручная подстройка по тангажу
+  if (axis == FD_PITCH && STATE(AIRPLANE)) {
+    /*
+    * fixed_wing_level_trim имеет знак, противоположный rc_command.
+    * Положительное значение rcCommand означает, что нос должен указывать вниз
+    * Отрицательный rc_command означает, что нос должен указывать вверх
+    * Это противоречит интуиции и естественным образом предполагает, что + должно означать ВВЕРХ.
+    * Вот почему fixed_wing_level_trim имеет знак, противоположный rc_command.
+    * Положительное значение fixed_wing_level_trim означает, что нос должен указывать вверх
+    * Отрицательный параметр fixed_wing_level_trim означает, что нос должен указывать вниз
+    */
+    angle_target -= DEGREES_TO_DECIDEGREES(fixed_wing_level_trim);
+  }
+// #ifdef USE_SECONDARY_IMU - в common.h
+  float actual;
+  // вторичный инерциальный модуль
+  // в зависимости от оси получает значение по ролу, питчу или по положению в воздухе ???
+  // if (secondaryImuState.active && secondaryImuConfig()->useForStabilized) {
+  //   actual = (axis == FD_ROLL) ? secondaryImuState.eulerAngles.values.roll : secondaryImuState.eulerAngles.values.pitch;
+  // } else {
+  //   actual = attitude.raw[axis];
+  // }
+
+  const float angle_error_deg = DECIDEGREES_TO_DEGREES(angle_target - actual);
+
+  float angle_rate_target = constrainf(angle_error_deg * (get_pid_bank()->pid[PID_LEVEL].P / FP_PID_LEVEL_P_MULTIPLIER), -current_control_rate_profile.stabilized.rates[axis] * 10.0F, current_control_rate_profile.stabilized.rates[axis] * 10.0f);
+
+  // Применяем простой LPF к angle_rate_target, чтобы сделать ответ менее резким
+  // Идеи, лежащие в основе этого:
+  // 1) Отношение обновляется со скоростью гироскопа, rateTarget для режима ANGLE рассчитывается из отношения
+  // 2) Если этот параметр rateTarget передается непосредственно в ПИД-регулятор на базе гироскопа, это фактически удваивает ошибку rateError.
+  // D-член, рассчитанный на основе ошибки, имеет тенденцию еще больше усиливать это. Более того, это, как правило, откликается на каждое
+  // малейшее изменение отношения вызывает нервозность при самовыравнивании
+  // 3) Понижение УРОВНЯ P может сделать эффекты (2) менее заметными, но это также замедлит самовыравнивание.
+  // 4) Реакция пилота-человека на изменение ориентации в режиме RATE довольно медленная и плавная, пилот-человек - нет.
+  // компенсируем каждое малейшее изменение
+  // 5) (2) и (4) приводят к простой идее добавления фильтра нижних частот в rateTarget для демпфирования режима ANGLE
+  // реакция на быструю смену отношения и сглаживание самовыравнивающейся реакции
+  if (get_pid_bank()->pid[PID_LEVEL].I)
+    // I8 [PIDLEVEL] - частота среза фильтра (Гц). Практические значения частоты фильтрации 5-10 Гц.
+    angle_rate_target = pt1_filter_apply4(&pid_state->angle_filter_state, angle_rate_target, get_pid_bank()->pid[PID_LEVEL].I, dT);
+
+  // P [LEVEL] определяет силу самовыравнивания (как для режимов ANGLE, так и HORIZON)
+  pid_state->rate_target = (FLIGHT_MODE(HORIZON_MODE)) ? (1.0F - horizon_rate_magnitude) * angle_rate_target + horizon_rate_magnitude * pid_state->rate_target :
+                                                          angle_rate_target;
+}
+
+/**
+  * @brief Получение значения наклона
+  * @param Положение стика и максимальный наклон
+  * @retval Float - масштабированное значение наклона в пределах значений стика
+  */
+static float pid_rc_command_to_angle (int16_t stick, int16_t max_inclination)
+{
+    stick = constrain(stick, -500, 500);
+    return scaleRangef((float)stick, -500.0F, 500.0F, (float)-max_inclination, (float)max_inclination);
+}
+
+static float get_calc_horizon_rate_magnitude (void)
+{
+  // Выясняем исходные позиции стиков
+  const int32_t stick_pos_ail = ABS(get_rc_stick_deflection(FD_ROLL));
+  const int32_t stick_pos_ele = ABS(get_rc_stick_deflection(FD_PITCH));
+  const float most_deflected_stick_pos = constrain(MAX(stick_pos_ail, stick_pos_ele), 0, 500) / 500.0F;
+  const float mode_transition_stick_pos = constrain(get_pid_bank()->pid[PID_LEVEL].D, 0, 100) / 100.0F;
+
+  // Рассчитываем точку перехода по отклонению стика
+  float horizon_rate_magnitude = (most_deflected_stick_pos <= mode_transition_stick_pos) ? most_deflected_stick_pos / mode_transition_stick_pos : 1.0F;
+    
+  return horizon_rate_magnitude;
+}
+
+void update_heading_hold_target (int16_t heading)
+{
+    heading_hold_target = heading;
 }
 
 float nav_pid_apply3 (pid_controller_ts *pid, const float setpoint, const float measurement,  const float dt, const float out_min, const float out_max,
@@ -556,7 +846,7 @@ float nav_pid_apply3 (pid_controller_ts *pid, const float setpoint, const float 
   new_derivative *= new_derivative * dTerm_scaler;
 
   if (pid_flags & PID_ZERO_INTEGRATOR) {
-      pid->integrator = 0.0f;
+      pid->integrator = 0.0F;
   }
 
   /*
@@ -634,4 +924,35 @@ void nav_pid_init (pid_controller_ts *pid, float _kP, float _kI, float _kD, floa
     
     pid->dterm_lpf_hz = _dterm_lpf_hz;
     nav_pid_reset(pid);
+}
+
+// HEADING_HOLD P Контроллер возвращает желаемую скорость вращения в dps для подачи на контроллер скорости
+static float pid_heading_hold (float delta_t)
+{
+  float heading_hold_rate;
+
+  int16_t error = /*DECIDEGREES_TO_DEGREES(attitude.values.yaw) - значение по рысканию*/ - heading_hold_target;
+
+  // Преобразование абсолютной погрешности относительно текущего курса
+  if (error <= -180)
+    error += 360;
+  if (error >= +180)
+    error -= 360;
+
+  heading_hold_rate = error * get_pid_bank()->pid[PID_HEADING].P / 30.0F;
+  heading_hold_rate = constrainf(heading_hold_rate, -p_pid_profile->heading_hold_rate_limit, p_pid_profile->heading_hold_rate_limit);
+  heading_hold_rate = pt1_filter_apply4(&heading_hold_rate_filter, heading_hold_rate, HEADING_HOLD_ERROR_LPF_FREQ, delta_t);
+
+  return heading_hold_rate;
+}
+
+const pid_bank_ts *get_pid_bank (void) 
+{
+    return used_pid_controller_type == PID_TYPE_PIFF ? &p_pid_profile->bank_fw : &p_pid_profile->bank_mc;
+}
+
+static float pid_rc_command_to_rate (int16_t stick, uint8_t rate)
+{
+    const float max_rate_DPS = rate * 10.0F;
+    return scaleRangef((float) stick, -500.0F, 500.0F, -max_rate_DPS, max_rate_DPS);
 }

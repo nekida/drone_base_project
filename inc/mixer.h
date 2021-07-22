@@ -147,6 +147,8 @@ extern uint16_t motor[MAX_SUPPORTED_MOTORS];
 extern uint16_t motor_disarmed[MAX_SUPPORTED_MOTORS];
 extern int mixer_throttle_command;
 
+extern mixer_config_ts mixer_config;
+
 int             get_throttle_idle_value     (void);
 int16_t         get_throttle_percent        (void);
 uint8_t         get_motor_count             (void);

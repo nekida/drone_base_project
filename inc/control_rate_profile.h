@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include "pid.h"
 
+
 #define MAX_CONTROL_RATE_PROFILE_COUNT 3
 
 enum {
@@ -97,7 +98,6 @@ typedef struct {
     struct {
         uint8_t fpv_cam_angle_degrees;             // Camera angle to treat as "forward" base axis in ACRO (Roll and Yaw sticks will command rotation considering this axis)
     } misc;
-
 } control_rate_config_ts;
 
 extern control_rate_config_ts current_control_rate_profile;

@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 #include "filter.h"
+#include "utils.h"
+#include <stdbool.h>
 
 #define MAX_SMITH_SAMPLES 64
 
