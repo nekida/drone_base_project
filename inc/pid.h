@@ -29,6 +29,8 @@
 #define FP_PID_YAWHOLD_P_MULTIPLIER 80.0f
 #define GRAVITY_CMSS    980.665f
 #define AXIS_ACCEL_MIN_LIMIT        50
+#define MC_ITERM_RELAX_SETPOINT_THRESHOLD 40.0f
+#define MC_ITERM_RELAX_CUTOFF_DEFAULT 15
 
 typedef enum {
     X = 0,
@@ -328,25 +330,25 @@ typedef struct {
 
     // Rate filtering
     rate_limit_filter_ts axis_accel_filter;
-    fir_filter_ts pterm_lpf_state;
-    filter_tu dterm_lpf_state;
-    filter_tu dterm_lpf2_state;
+    fir_filter_ts p_term_lpf_state;
+    filter_tu d_term_lpf_state;
+    filter_tu d_term_lpf2_state;
 
     float stick_position;
 
     float previous_rate_target;
     float previous_rate_gyro;
 
-#ifdef USE_D_BOOST
-    firFilter_ts dBoostLpf;
-    biquadFilter_t dBoostGyroLpf;
-#endif
+// #ifdef USE_D_BOOST - в common.h
+    pt1_filter_ts d_boost_lpf;
+    biquad_filter_ts d_boost_gyro_lpf;
+//#endif
     uint16_t pid_sum_limit;
-    filter_apply_4_fn_ptr pterm_filter_apply_fn;
+    filter_apply_4_fn_ptr p_term_filter_apply_fn;
     bool iterm_limit_active;
     bool iterm_freeze_active;
 
-    biquad_filter_ts rate_target_filter;
+    pt2_filter_ts rate_target_filter;
 
     smith_predictor_ts smith_predictor;
 } pid_state_ts;
@@ -451,10 +453,14 @@ static inline void vector_scale (fp_vector3_tu *result, const fp_vector3_tu *a, 
     result->z = a->z * b;
 }
 
-void    pid_init                    (void);
-void    pid_controller              (float dT);
-void    update_heading_hold_target  (int16_t heading);
-const   pid_bank_ts *get_pid_bank   (void);
-void    nav_pid_init                (pid_controller_ts *pid, float _kP, float _kI, float _kD, float _kFF, float _dterm_lpf_hz);
+void        pid_init                    (void);
+void        pid_controller              (float dT);
+void        update_heading_hold_target  (int16_t heading);
+void        schedule_pid_gains_update   (void);
+const       pid_bank_ts *get_pid_bank   (void);
+pid_bank_ts *get_pid_bank_mutable       (void); 
+void        nav_pid_init                (pid_controller_ts *pid, float _kP, float _kI, float _kD, float _kFF, float _dterm_lpf_hz);
+
+extern pid_profile_ts *p_pid_profile;
 
 #endif // _PID_H

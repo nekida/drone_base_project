@@ -7,20 +7,25 @@
 #define D_BOOST_GYRO_LPF_HZ 80    // Входная отсечка Biquad lowpass до пика D около частот пропитки
 #define D_BOOST_LPF_HZ 10         // Отсечка нижних частот PT1 для сглаживания эффекта усиления
 
-static void pid_apply_fixed_wing_rate_controller (pid_state_ts *pidState, flight_dynamics_index_te axis, float dT);
-static void pid_apply_multicopter_rate_controller (pid_state_ts *pid_state, flight_dynamics_index_te axis, float dT);
-static void null_rate_controller (pid_state_ts *pid_state, flight_dynamics_index_te axis, float dT);
-static float pid_rc_command_to_rate (int16_t stick, uint8_t rate);
-static float pid_heading_hold (float delta_t);
-static float get_calc_horizon_rate_magnitude (void);
-static void pid_level (pid_state_ts *pid_state, flight_dynamics_index_te axis, float horizon_rate_magnitude, float dT);
-static float pid_rc_command_to_angle (int16_t stick, int16_t max_inclination);
-static void pid_turn_assistant (pid_state_ts *pid_state_local, float bank_angle_target_local, float pitch_angle_target_local);
-static void pid_apply_fpv_camera_angle_mix (pid_state_ts *pid_state_local, uint8_t fpv_camera_angle);
-static void pid_apply_setpoint_rate_limiting (pid_state_ts *pid_state_local, flight_dynamics_index_te axis_local, float dT_local);
-static bool is_fixed_wing_iterm_limit_active (float stick_position);
-static void check_iterm_limiting_active (pid_state_ts *pid_state_local);
-static void chech_itrem_freezing_active (pid_state_ts *pid_state_local, flight_dynamics_index_te axis);
+static void   pid_apply_fixed_wing_rate_controller (pid_state_ts *pidState, flight_dynamics_index_te axis, float dT);
+static void   pid_apply_multicopter_rate_controller (pid_state_ts *pid_state, flight_dynamics_index_te axis, float dT);
+static void   null_rate_controller (pid_state_ts *pid_state, flight_dynamics_index_te axis, float dT);
+static float  pid_rc_command_to_rate (int16_t stick, uint8_t rate);
+static float  pid_heading_hold (float delta_t);
+static float  get_calc_horizon_rate_magnitude (void);
+static void   pid_level (pid_state_ts *pid_state, flight_dynamics_index_te axis, float horizon_rate_magnitude, float dT);
+static float  pid_rc_command_to_angle (int16_t stick, int16_t max_inclination);
+static void   pid_turn_assistant (pid_state_ts *pid_state_local, float bank_angle_target_local, float pitch_angle_target_local);
+static void   pid_apply_fpv_camera_angle_mix (pid_state_ts *pid_state_local, uint8_t fpv_camera_angle);
+static void   pid_apply_setpoint_rate_limiting (pid_state_ts *pid_state_local, flight_dynamics_index_te axis_local, float dT_local);
+static bool   is_fixed_wing_iterm_limit_active (float stick_position);
+static void   check_iterm_limiting_active (pid_state_ts *pid_state_local);
+static void   chech_itrem_freezing_active (pid_state_ts *pid_state_local, flight_dynamics_index_te axis);
+static float  p_term_process (pid_state_ts *pid_state_local, float rate_error, float dT);
+static float  d_term_process (pid_state_ts *pid_state_local, float dT);
+static float  apply_d_boost (pid_state_ts *pid_state_local, float dT);
+static float  apply_iterm_relax (const int axis, float current_pid_setpoint, float iterm_error_rate);
+static void   apply_iterm_limiting (pid_state_ts *pid_state_local);
 
 // #ifdef USE_BLACKBOX
 int32_t axis_pid_p[FLIGHT_DYNAMICS_INDEX_COUNT];
@@ -413,10 +418,10 @@ void pid_init (void)
     antigravity_accelerator = p_pid_profile->antigravity_accelerator;
     
     pid_state[FD_YAW].pid_sum_limit = p_pid_profile->pid_sum_limit_yaw;
-    pid_state[FD_YAW].pterm_filter_apply_fn = (yaw_lpf_hz) ? (filter_apply_4_fn_ptr)pt1_filter_apply4 : (filter_apply_4_fn_ptr)null_filter_apply4;
+    pid_state[FD_YAW].p_term_filter_apply_fn = (yaw_lpf_hz) ? (filter_apply_4_fn_ptr)pt1_filter_apply4 : (filter_apply_4_fn_ptr)null_filter_apply4;
     for (uint8_t axis = FD_ROLL; axis <= FD_PITCH; axis++) {
       pid_state[axis].pid_sum_limit = p_pid_profile->pid_sum_limit;
-      pid_state[axis].pterm_filter_apply_fn = (filter_apply_4_fn_ptr)null_filter_apply4;
+      pid_state[axis].p_term_filter_apply_fn = (filter_apply_4_fn_ptr)null_filter_apply4;
     }
 
     // в зависимости от плафтормы меняется и тип ПИДа
@@ -459,88 +464,152 @@ static void null_rate_controller (pid_state_ts *pid_state, flight_dynamics_index
     UNUSED(dT);
 }
 
-static void pid_apply_multicopter_rate_controller (pid_state_ts *pid_state, flight_dynamics_index_te axis, float dT)
+static float p_term_process (pid_state_ts *pid_state_local, float rate_error, float dT) 
 {
-//     const float rateError = pid_state->rate_target - pid_state->gyro_rate;
-//     const float newPTerm = pTermProcess(pidState, rateError, dT);
-//     const float newDTerm = dTermProcess(pidState, dT);
+    float new_p_term = rate_error * pid_state_local->kP;
 
-//     const float rateTargetDelta = pidState->rateTarget - pidState->previousRateTarget;
-//     const float rateTargetDeltaFiltered = pt2FilterApply(&pidState->rateTargetFilter, rateTargetDelta);
-
-//     /*
-//      * Compute Control Derivative
-//      */
-//     const float newCDTerm = rateTargetDeltaFiltered * (pidState->kCD / dT);
-//     DEBUG_SET(DEBUG_CD, axis, newCDTerm);
-
-//     // TODO: Get feedback from mixer on available correction range for each axis
-//     const float newOutput = newPTerm + newDTerm + pidState->errorGyroIf + newCDTerm;
-//     const float newOutputLimited = constrainf(newOutput, -pidState->pidSumLimit, +pidState->pidSumLimit);
-
-//     float itermErrorRate = applyItermRelax(axis, pidState->rateTarget, rateError);
-
-// #ifdef USE_ANTIGRAVITY
-//     itermErrorRate *= iTermAntigravityGain;
-// #endif
-
-//     pidState->errorGyroIf += (itermErrorRate * pidState->kI * antiWindupScaler * dT)
-//                              + ((newOutputLimited - newOutput) * pidState->kT * antiWindupScaler * dT);
-
-//     // Don't grow I-term if motors are at their limit
-//     applyItermLimiting(pidState);
-
-//     axisPID[axis] = newOutputLimited;
-
-// #ifdef USE_BLACKBOX
-//     axisPID_P[axis] = newPTerm;
-//     axisPID_I[axis] = pidState->errorGyroIf;
-//     axisPID_D[axis] = newDTerm;
-//     axisPID_Setpoint[axis] = pidState->rateTarget;
-// #endif
-
-//     pidState->previousRateTarget = pidState->rateTarget;
-//     pidState->previousRateGyro = pidState->gyroRate;
+    return pid_state_local->p_term_filter_apply_fn(&pid_state_local->p_term_lpf_state, new_p_term, yaw_lpf_hz, dT);
 }
 
-static void pid_apply_fixed_wing_rate_controller (pid_state_ts *pidState, flight_dynamics_index_te axis, float dT)
+// #ifdef USE_D_BOOST - в common.h
+static float apply_d_boost (pid_state_ts *pid_state_local, float dT) 
 {
-//     const float rateError = pidState->rateTarget - pidState->gyroRate;
-//     const float newPTerm = pTermProcess(pidState, rateError, dT);
-//     const float newDTerm = dTermProcess(pidState, dT);
-//     const float newFFTerm = pidState->rateTarget * pidState->kFF;
+    float d_boost = 1.0F;
 
-//     DEBUG_SET(DEBUG_FW_D, axis, newDTerm);
-//     /*
-//      * Integral should be updated only if axis Iterm is not frozen
-//      */
-//     if (!pidState->itermFreezeActive) {
-//         pidState->errorGyroIf += rateError * pidState->kI * dT;
-//     }
+    if (d_boost_factor > 1) {
+        const float d_boost_gyro_delta = (pid_state_local->gyro_rate - pid_state_local->previous_rate_gyro) / dT;
+        const float d_boost_gyro_acceleration = fabsf(biquad_filter_apply(&pid_state_local->d_boost_gyro_lpf, d_boost_gyro_delta));
+        const float d_boost_rate_acceleration = fabsf((pid_state_local->rate_target - pid_state_local->previous_rate_target) / dT);
 
-//     applyItermLimiting(pidState);
+        const float acceleration = MAX(d_boost_gyro_acceleration, d_boost_rate_acceleration);
+        d_boost = scaleRangef(acceleration, 0.0f, d_boost_max_at_alleceleration, 1.0F, d_boost_factor);
+        d_boost = pt1_filter_apply4(&pid_state_local->d_boost_lpf, d_boost, D_BOOST_LPF_HZ, dT);
+        d_boost = constrainf(d_boost, 1.0F, d_boost_factor);
+    }
 
-//     if (pidProfile()->fixedWingItermThrowLimit != 0) {
-//         pidState->errorGyroIf = constrainf(pidState->errorGyroIf, -pidProfile()->fixedWingItermThrowLimit, pidProfile()->fixedWingItermThrowLimit);
-//     }
+    return d_boost;
+}
 
-//     axisPID[axis] = constrainf(newPTerm + newFFTerm + pidState->errorGyroIf + newDTerm, -pidState->pidSumLimit, +pidState->pidSumLimit);
+static float d_term_process (pid_state_ts *pid_state_local, float dT) 
+{
+    // Calculate new D-term
+    float new_d_term = 0;
+    if (pid_state_local->kD == 0) {
+        // optimisation for when D is zero, often used by YAW axis
+        new_d_term = 0;
+    } else {
+        float delta = pid_state_local->previous_rate_gyro - pid_state_local->gyro_rate;
 
-// #ifdef USE_AUTOTUNE_FIXED_WING
-//     if (FLIGHT_MODE(AUTO_TUNE) && !FLIGHT_MODE(MANUAL_MODE)) {
-//         autotuneFixedWingUpdate(axis, pidState->rateTarget, pidState->gyroRate, constrainf(newPTerm + newFFTerm, -pidState->pidSumLimit, +pidState->pidSumLimit));
-//     }
+        delta = dterm_lpf_filter_apply_fn((filter_tu *) &pid_state_local->d_term_lpf_state, delta);
+        delta = dterm_lpf2_filter_apply_fn((filter_tu *) &pid_state_local->d_term_lpf2_state, delta);
+
+        // Calculate derivative
+        new_d_term =  delta * (pid_state_local->kD / dT) * apply_d_boost(pid_state_local, dT);
+    }
+    return (new_d_term);
+}
+
+static float apply_iterm_relax (const int axis, float current_pid_setpoint, float iterm_error_rate)
+{
+  if (iterm_relax && (axis < FD_YAW || iterm_relax == ITERM_RELAX_RPY)) {
+    const float setpoint_lpf = pt1_filter_apply(&windup_lpf[axis], current_pid_setpoint);
+    const float setpoint_hpf = fabsf(current_pid_setpoint - setpoint_lpf);
+    const float iterm_relax_factor = MAX(0, 1 - setpoint_hpf / MC_ITERM_RELAX_SETPOINT_THRESHOLD);
+
+    return iterm_error_rate * iterm_relax_factor;
+  }
+
+  return iterm_error_rate;
+}
+
+static void pid_apply_multicopter_rate_controller (pid_state_ts *pid_state_local, flight_dynamics_index_te axis, float dT)
+{
+    const float rate_error = pid_state_local->rate_target - pid_state_local->gyro_rate;
+    const float new_p_term = p_term_process(pid_state_local, rate_error, dT);
+    const float new_d_term = d_term_process(pid_state_local, dT);
+
+    const float rate_target_delta = pid_state_local->rate_target - pid_state_local->previous_rate_target;
+    const float rate_target_delta_filtered = pt2_filter_apply(&pid_state_local->rate_target_filter, rate_target_delta);
+
+    /*
+     * Compute Control Derivative
+     */
+    const float new_c_d_term = rate_target_delta_filtered * (pid_state_local->kCD / dT);
+
+    // TODO: Get feedback from mixer on available correction range for each axis
+    const float new_output = new_p_term + new_d_term + pid_state_local->error_gyro_if + new_c_d_term;
+    const float new_output_limited = constrainf(new_output, -pid_state_local->pid_sum_limit, +pid_state_local->pid_sum_limit);
+
+    float iterm_error_rate = apply_iterm_relax(axis, pid_state_local->rate_target, rate_error);
+
+// #ifdef USE_ANTIGRAVITY - определенно в common.h
+    iterm_error_rate *= iTermAntigravityGain;
 // #endif
 
-// #ifdef USE_BLACKBOX
-//     axisPID_P[axis] = newPTerm;
-//     axisPID_I[axis] = pidState->errorGyroIf;
-//     axisPID_D[axis] = newDTerm;
-//     axisPID_Setpoint[axis] = pidState->rateTarget;
+    pid_state_local->error_gyro_if += (iterm_error_rate * pid_state_local->kI * anti_windup_scaler * dT)
+                             + ((new_output_limited - new_output) * pid_state_local->kT * anti_windup_scaler * dT);
+
+    // Don't grow I-term if motors are at their limit
+    apply_iterm_limiting(pid_state_local);
+
+    axis_pid[axis] = new_output_limited;
+
+// #ifdef USE_BLACKBOX - определенно в common.h
+    axis_pid_p[axis] = new_p_term;
+    axis_pid_i[axis] = pid_state_local->error_gyro_if;
+    axis_pid_d[axis] = new_d_term;
+    axis_pid_setpoint[axis] = pid_state_local->rate_target;
 // #endif
 
-//     pidState->previousRateGyro = pidState->gyroRate;
+    pid_state_local->previous_rate_target = pid_state_local->rate_target;
+    pid_state_local->previous_rate_gyro = pid_state_local->gyro_rate;
+}
 
+static void apply_iterm_limiting (pid_state_ts *pid_state_local) 
+{
+  if (pid_state_local->iterm_limit_active) {
+      pid_state_local->error_gyro_if = constrainf(pid_state_local->error_gyro_if, -pid_state_local->error_gyro_if_limit, pid_state_local->error_gyro_if_limit);
+  } else {
+      pid_state_local->error_gyro_if_limit = fabsf(pid_state_local->error_gyro_if);
+  }
+}
+
+static void pid_apply_fixed_wing_rate_controller (pid_state_ts *pid_state_local, flight_dynamics_index_te axis, float dT)
+{
+  const float rate_error = pid_state_local->rate_target - pid_state_local->gyro_rate;
+  const float new_p_term = p_term_process(pid_state_local, rate_error, dT);
+  const float new_d_term = d_term_process(pid_state_local, dT);
+  const float new_f_f_term = pid_state_local->rate_target * pid_state_local->kFF;
+
+  /*
+    * Интеграл следует обновлять только в том случае, если ось Iterm не заморожена.
+    */
+  if (!pid_state_local->iterm_freeze_active) {
+      pid_state_local->error_gyro_if += rate_error * pid_state_local->kI * dT;
+  }
+
+  apply_iterm_limiting(pid_state_local);
+
+  if (p_pid_profile->fixed_wing_iterm_throw_limit) {
+      pid_state_local->error_gyro_if = constrainf(pid_state_local->error_gyro_if, -p_pid_profile->fixed_wing_iterm_throw_limit, p_pid_profile->fixed_wing_iterm_throw_limit);
+  }
+
+  axis_pid[axis] = constrainf(new_p_term + new_f_f_term + pid_state_local->error_gyro_if + new_d_term, -pid_state_local->pid_sum_limit, +pid_state_local->pid_sum_limit);
+
+// #ifdef USE_AUTOTUNE_FIXED_WING - определенно в common.h
+  if (FLIGHT_MODE(AUTO_TUNE) && !FLIGHT_MODE(MANUAL_MODE)) {
+      autotune_fixed_wing_update(axis, pid_state_local->rate_target, pid_state_local->gyro_rate, constrainf(new_p_term + new_f_f_term, -pid_state_local->pid_sum_limit, +pid_state_local->pid_sum_limit));
+  }
+// #endif
+
+// #ifdef USE_BLACKBOX - определенно в common.h
+  axis_pid_p[axis] = new_p_term;
+  axis_pid_i[axis] = pid_state_local->error_gyro_if;
+  axis_pid_d[axis] = new_d_term;
+  axis_pid_setpoint[axis] = pid_state_local->rate_target;
+// #endif
+
+  pid_state_local->previous_rate_gyro = pid_state_local->gyro_rate;
 }
 
 /**
@@ -946,9 +1015,34 @@ static float pid_heading_hold (float delta_t)
   return heading_hold_rate;
 }
 
+/**
+  * @brief Возвращает используемый профиль типа ПИДа
+  * @param Нет
+  * @retval const pid_bank_ts * 
+  */
 const pid_bank_ts *get_pid_bank (void) 
 {
     return used_pid_controller_type == PID_TYPE_PIFF ? &p_pid_profile->bank_fw : &p_pid_profile->bank_mc;
+}
+
+/**
+  * @brief Возвращает используемый профиль типа ПИДа и позволяет изменить его параметры
+  * @param Нет
+  * @retval pid_bank_ts * 
+  */
+pid_bank_ts *get_pid_bank_mutable (void) 
+{
+    return used_pid_controller_type == PID_TYPE_PIFF ? &p_pid_profile->bank_fw : &p_pid_profile->bank_mc;
+}
+
+/**
+  * @brief Обновление флага обновления усиления ПИД
+  * @param Нет
+  * @retval Нет
+  */
+void schedule_pid_gains_update (void)
+{
+  pid_gains_update_required = true;
 }
 
 static float pid_rc_command_to_rate (int16_t stick, uint8_t rate)

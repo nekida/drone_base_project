@@ -15,6 +15,7 @@ set(SOURCES src/main.c
             src/tasks 
             src/drone_time 
             src/pid.c 
+            src/pid_autotune.c
             src/maths.c
             src/filter.c
             src/smith_predictor.c
